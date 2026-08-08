@@ -51,6 +51,31 @@ but writes no outbox row. A deploy alone posts nothing.
 
 Watchdog: start_delay=271.
 
+Run profiles (T-2026-KYT-9050-117)
+----------------------------------
+This file is BOTH trailing bots; ``TRAILING_BOT_PROFILE`` selects at import so a
+behaviour change here changes both arms at once (operator requirement: one code
+path, two bots):
+  * ``trail`` (default) — bot 40 as before: CH_TRAILING, admission caps on
+    (``SLOT_CAP`` slots, ``EXPOSURE_CAP`` ±50), table ``trailing_positions``.
+  * ``free`` — bot 44 (``44_trailing_free_bot.py`` sets the env var and
+    re-executes this module): the unfiltered arm. NO exposure cap
+    (operator decision Michi 2026-08-08 — T-052's ±50 bound deliberately
+    dropped so the arm measures ALL roster trades), spread evenly over TWO
+    channels (``CH_TRAILING_FREE_A/B``) because Cornix caps each channel at
+    500 — two channels ≈ 1000 seats, and occupancy above that is rare
+    (``trailing_slot_budget_live.md``). Own table ``trailing_free_positions``,
+    own live gate ``TRAILING_FREE_LIVE_POSTING`` (default 0), tag suffix
+    ``-TRAILF``. Until the two real channels exist, both fall back to
+    ``CH_SHADOW_TEST`` (not Cornix-executed — the containment).
+One position per symbol holds ACROSS the profile's channels (operator decision
+2026-08-08): Cornix' close is only per channel, but double exposure on one coin
+is not what the unfiltered arm is meant to measure. A close always posts to the
+channel its entry was posted in (``trailing_*.channel_id``) — routing it
+anywhere else would close a different trade or none.
+Everything else — trail rule, time-stop, fill logic, re-entry locks, all
+tunables under ``TRAILING_BOT_*`` — is shared between the profiles.
+
 Loss limitation (T-2026-KYT-9050-052, operator decision Michi 2026-07-28)
 --------------------------------------------------------------------------
 The trail can by construction only close winners — without a counterpart the
@@ -101,11 +126,45 @@ from core.trailing_roster import (
 )
 from core.trailing_state import TrailingState, mark_pct
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - TRAILING_BOT - %(message)s")
+# ── Run profile (T-2026-KYT-9050-117) ────────────────────────────────────────
+# Selected via env at import because bot 44 is this module re-executed, not a
+# copy: `44_trailing_free_bot.py` sets TRAILING_BOT_PROFILE=free and execs this
+# file, so every behaviour change lands in both arms by construction.
+PROFILE = os.getenv("TRAILING_BOT_PROFILE", "trail").strip().lower()
+if PROFILE == "trail":
+    _channels_raw: tuple[int, ...] = (_kcfg.CH_TRAILING,)
+    LIVE_POSTING = os.getenv("TRAILING_BOT_LIVE_POSTING", "0") == "1"
+    TABLE = "trailing_positions"
+    TAG_SUFFIX = "-TRAIL"
+    LOG_NAME = "TRAILING_BOT"
+    DISPLAY = "TRAILING MIRROR"
+    _EXPOSURE_ENV, _EXPOSURE_DEFAULT = "TRAILING_BOT_EXPOSURE_CAP", "50"
+elif PROFILE == "free":
+    _channels_raw = (_kcfg.CH_TRAILING_FREE_A, _kcfg.CH_TRAILING_FREE_B)
+    LIVE_POSTING = os.getenv("TRAILING_FREE_LIVE_POSTING", "0") == "1"
+    TABLE = "trailing_free_positions"
+    # Own tag so the two arms stay distinguishable in the channels and in any
+    # message-level grep (rule-6 spirit: a different strategy posts a
+    # different tag).
+    TAG_SUFFIX = "-TRAILF"
+    LOG_NAME = "TRAILING_FREE"
+    DISPLAY = "TRAILING FREE MIRROR"
+    # The unfiltered arm: T-052's ±50 bound deliberately dropped (operator
+    # decision Michi 2026-08-08). 0 = off, same semantics as the trail knob.
+    _EXPOSURE_ENV, _EXPOSURE_DEFAULT = "TRAILING_FREE_EXPOSURE_CAP", "0"
+else:
+    raise RuntimeError(f"Unknown TRAILING_BOT_PROFILE {PROFILE!r} — expected 'trail' or 'free'.")
+
+# Deduped and 0-filtered: both free channels fall back to CH_SHADOW_TEST until
+# the real ones exist, and posting the same symbol twice into ONE physical
+# channel would break the symbol-wide-close invariant. Empty ⇒ the (0,)
+# sentinel: a logical single channel that can never post (POSTING_ENABLED).
+TARGET_CHANNELS: tuple[int, ...] = tuple(dict.fromkeys(int(c) for c in _channels_raw if c)) or (0,)
+POSTING_ENABLED = LIVE_POSTING and TARGET_CHANNELS != (0,)
+
+logging.basicConfig(level=logging.INFO, format=f"%(asctime)s - {LOG_NAME} - %(message)s")
 logger = logging.getLogger(__name__)
 
-TARGET_CHANNEL_ID = _kcfg.CH_TRAILING
-LIVE_POSTING = os.getenv("TRAILING_BOT_LIVE_POSTING", "0") == "1"
 POLL_SECONDS = 10
 
 # How old can a source trade be at most for mirroring it to still be the SAME
@@ -164,8 +223,10 @@ TIME_STOP_SINCE = datetime.datetime.fromisoformat(
 # Net exposure cap per direction (T-2026-KYT-9050-052): a new entry whose
 # direction already leads the opposite direction by EXPOSURE_CAP positions
 # is not admitted. Not a market-state model (those were measured and discarded), but
-# a structural bound: the book must not become arbitrarily one-sided. 0 = off.
-EXPOSURE_CAP = int(os.getenv("TRAILING_BOT_EXPOSURE_CAP", "50"))
+# a structural bound: the book must not become arbitrarily one-sided. 0 = off —
+# which is the `free` profile's default (T-117): the unfiltered arm exists to
+# measure the book WITHOUT this bound.
+EXPOSURE_CAP = int(os.getenv(_EXPOSURE_ENV, _EXPOSURE_DEFAULT))
 
 # How long a symbol remains locked after a POSTED close before it can be reused.
 #
@@ -240,8 +301,11 @@ REASON_SL_HIT = "SL_HIT"
 #: marker, not an exit. Locking on those would cost entries without closing a hole.
 REENTRY_LOCKING_REASONS = (REASON_TRAIL, REASON_TIME_STOP)
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS trailing_positions (
+# Table name comes from the profile (T-117): the two arms must not share a book —
+# both mirror the same source ids, and the src/symbol unique indexes would make
+# whichever bot polls second silently lose every insert.
+SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {TABLE} (
     id             BIGSERIAL PRIMARY KEY,
     src_signal_id  BIGINT      NOT NULL,
     symbol         VARCHAR(20) NOT NULL,
@@ -255,19 +319,23 @@ CREATE TABLE IF NOT EXISTS trailing_positions (
     close_mark_pct DOUBLE PRECISION,
     posted         BOOLEAN     NOT NULL DEFAULT FALSE
 );
-CREATE UNIQUE INDEX IF NOT EXISTS trailing_positions_src_uniq
-    ON trailing_positions (src_signal_id);
-CREATE UNIQUE INDEX IF NOT EXISTS trailing_positions_open_symbol_uniq
-    ON trailing_positions (symbol) WHERE closed_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS {TABLE}_src_uniq
+    ON {TABLE} (src_signal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS {TABLE}_open_symbol_uniq
+    ON {TABLE} (symbol) WHERE closed_at IS NULL;
 """
 
 # Additively migrated (T-2026-KYT-9050-050): CREATE TABLE IF NOT EXISTS does not
 # touch an existing table, so columns must come individually — same
 # pattern as the schema safeguard in 8_ai_trade_monitor.
 SCHEMA_ADD = [
-    "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ",
-    "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS mirror_price DOUBLE PRECISION",
-    "ALTER TABLE trailing_positions ADD COLUMN IF NOT EXISTS sl DOUBLE PRECISION",
+    f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ",
+    f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS mirror_price DOUBLE PRECISION",
+    f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS sl DOUBLE PRECISION",
+    # Which channel the entry was posted to (T-117). The close MUST go to the
+    # same channel — Cornix' `Close` only acts there. NULL on legacy rows
+    # (single-channel era) falls back to the profile's first channel.
+    f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS channel_id BIGINT",
 ]
 
 
@@ -303,12 +371,12 @@ def clear_unposted_carryover(conn) -> int:
     the same transaction), so cleanup in the cycle would have nothing to do and
     could only harm.
     """
-    if not (LIVE_POSTING and TARGET_CHANNEL_ID):
+    if not POSTING_ENABLED:
         return 0
     with conn.cursor() as cur:
         cur.execute(
-            """
-            UPDATE trailing_positions
+            f"""
+            UPDATE {TABLE}
             SET closed_at = NOW(), close_reason = %s
             WHERE closed_at IS NULL AND posted = FALSE
             """,
@@ -407,7 +475,7 @@ def read_mirrored_src_ids(conn, src_ids: set[int]) -> set[int]:
         return set()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT src_signal_id FROM trailing_positions WHERE src_signal_id = ANY(%s)",
+            f"SELECT src_signal_id FROM {TABLE} WHERE src_signal_id = ANY(%s)",
             (list(src_ids),),
         )
         return {int(r[0]) for r in cur.fetchall()}
@@ -424,8 +492,8 @@ def read_cooling_symbols(conn) -> set[str]:
         return set()
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT DISTINCT symbol FROM trailing_positions
+            f"""
+            SELECT DISTINCT symbol FROM {TABLE}
             WHERE posted AND closed_at IS NOT NULL
               AND closed_at > NOW() - make_interval(secs => %s)
             """,
@@ -450,8 +518,8 @@ def read_reentry_locked_symbols(conn) -> set[str]:
         return set()
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT DISTINCT symbol FROM trailing_positions
+            f"""
+            SELECT DISTINCT symbol FROM {TABLE}
             WHERE closed_at IS NOT NULL
               AND close_reason = ANY(%s)
               AND closed_at > NOW() - make_interval(secs => %s)
@@ -465,10 +533,10 @@ def read_open_mirrors(conn) -> dict[int, dict]:
     """Own open mirror positions, ``src_signal_id`` → row."""
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT id, src_signal_id, symbol, model, direction, entry, peak_pct, posted,
-                   filled_at, mirror_price, opened_at, sl
-            FROM trailing_positions
+                   filled_at, mirror_price, opened_at, sl, channel_id
+            FROM {TABLE}
             WHERE closed_at IS NULL
             """
         )
@@ -489,8 +557,11 @@ def read_open_mirrors(conn) -> dict[int, dict]:
             "mirror_price": float(mprice) if mprice is not None else None,
             "opened_at": opened,
             "sl": float(sl) if sl is not None else None,
+            # NULL on legacy single-channel rows — resolved to the profile's
+            # first channel wherever it is consumed.
+            "channel_id": int(channel) if channel else None,
         }
-        for rid, src, symbol, model, direction, entry, peak, posted, filled, mprice, opened, sl in rows
+        for rid, src, symbol, model, direction, entry, peak, posted, filled, mprice, opened, sl, channel in rows
     }
 
 
@@ -499,12 +570,15 @@ def read_open_mirrors(conn) -> dict[int, dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _post(conn, message: str) -> None:
-    """Outbox row for own channel. Does not commit (caller contract)."""
+def _post(conn, message: str, channel: int) -> None:
+    """Outbox row for one of the profile's channels. Does not commit (caller
+    contract). The channel is explicit because entry and close of one position
+    must land in the SAME channel — Cornix' `Close` only acts where the entry
+    was parsed."""
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)",
-            (TARGET_CHANNEL_ID, message),
+            (channel, message),
         )
 
 
@@ -518,7 +592,7 @@ def entry_messages(sig: dict) -> tuple[str, str]:
     """
     lev = sig["lev"] or get_max_leverage(sig["symbol"], 20)
     cornix = build_cornix_block(
-        model_tag=f"{sig['tag']}-TRAIL",
+        model_tag=f"{sig['tag']}{TAG_SUFFIX}",
         symbol=sig["symbol"],
         direction=sig["direction"],
         lev=lev,
@@ -530,7 +604,7 @@ def entry_messages(sig: dict) -> tuple[str, str]:
         "<pre>"
         + "\n".join(
             [
-                f"<b>🪝 TRAILING MIRROR — {sig['tag']} {sig['direction']}</b>",
+                f"<b>🪝 {DISPLAY} — {sig['tag']} {sig['direction']}</b>",
                 f"<b>{sig['symbol']}</b>",
                 f"<b>→ Trail: {RETRACE_FRAC:.0%} give-back once peak &gt; {ACTIVATION_PCT:.1f}%</b>",
                 f"<b>→ Leg density: {sig['density']:.3f} % / slot-day</b>",
@@ -598,14 +672,16 @@ def admit(
         by ``EXPOSURE_CAP`` open positions. The book must not become arbitrarily
         one-sided (T-052: the one-sided LONG book WAS the account damage;
         the structural bound beat every market-state model in measurement).
-      * ``SLOT_CAP`` — the channel is full. Sorted by leg density so
-        in scarcity the same criterion decides that drove the selection:
-        return per occupied slot-day.
+      * ``SLOT_CAP`` — every channel is full. ``free_slots`` is the SUM of free
+        seats over the profile's channels (T-117) — one channel for `trail`,
+        two for `free`. Sorted by leg density so in scarcity the same criterion
+        decides that drove the selection: return per occupied slot-day.
 
     ``open_by_dir`` are the ALREADY open mirrors per direction; admitted
     candidates count immediately so a single cycle cannot overrun the cap.
     Rejections are returned, not swallowed — silent capping would later read
-    as "everything mirrored".
+    as "everything mirrored". WHERE an admitted entry lands is not decided
+    here — that is ``assign_channels``, pure balancing without policy.
     """
     admitted, rejected = [], []
     taken = set(held_symbols)
@@ -641,6 +717,34 @@ def admit(
     return admitted, rejected
 
 
+def assign_channels(
+    admitted: list[tuple[int, dict]],
+    open_by_channel: dict[int, int],
+    channels: tuple[int, ...] | None = None,
+) -> list[tuple[int, dict, int]]:
+    """Spread admitted entries over the profile's channels (T-117).
+
+    Pure balancing, no policy: `admit` already decided WHO gets in (and capped
+    the count at the summed free slots), this only decides WHERE. Each entry
+    goes to the channel with the fewest open positions — with equal caps that
+    is the one with the most free seats, so a channel can never be pushed past
+    ``SLOT_CAP`` while another still has room, and over time the two books
+    stay level. Ties resolve to configured order, so the single-channel `trail`
+    profile degenerates to "everything into CH_TRAILING" — bot 40 unchanged.
+
+    Counts are advanced per assignment so one cycle full of entries cannot pile
+    onto the channel that merely STARTED emptiest.
+    """
+    channels = TARGET_CHANNELS if channels is None else channels
+    counts = {c: open_by_channel.get(c, 0) for c in channels}
+    placed = []
+    for sid, sig in admitted:
+        best = min(channels, key=lambda c: counts[c])
+        counts[best] += 1
+        placed.append((sid, sig, best))
+    return placed
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ONE POLL CYCLE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -658,8 +762,8 @@ def record_preexisting(conn, stale: list[tuple[int, dict]]) -> None:
     """
     with conn.cursor() as cur:
         cur.executemany(
-            """
-            INSERT INTO trailing_positions
+            f"""
+            INSERT INTO {TABLE}
                 (src_signal_id, symbol, model, direction, entry, peak_pct, posted,
                  closed_at, close_reason)
             VALUES (%s, %s, %s, %s, %s, NULL, FALSE, NOW(), %s)
@@ -710,12 +814,21 @@ def open_mirrors(
 
     held = {m["symbol"] for m in mirrors.values()}
     open_by_dir = {"LONG": 0, "SHORT": 0}
+    # Per-channel occupancy (T-117): SLOT_CAP is Cornix' PER-CHANNEL bound, so
+    # the admission budget is the sum of free seats over the profile's
+    # channels — one channel for `trail` (unchanged 500), two for `free`
+    # (~1000). A legacy row without channel_id sits in the first channel: that
+    # is the only one that existed when it was written.
+    open_by_channel = dict.fromkeys(TARGET_CHANNELS, 0)
     for m in mirrors.values():
         open_by_dir[m["direction"]] = open_by_dir.get(m["direction"], 0) + 1
+        c = m["channel_id"] or TARGET_CHANNELS[0]
+        open_by_channel[c] = open_by_channel.get(c, 0) + 1
+    free_slots = sum(max(0, SLOT_CAP - open_by_channel.get(c, 0)) for c in TARGET_CHANNELS)
     admitted, rejected = admit(
         new,
         held,
-        SLOT_CAP - len(mirrors),
+        free_slots,
         read_cooling_symbols(conn),
         open_by_dir,
         locked=read_reentry_locked_symbols(conn),
@@ -737,9 +850,9 @@ def open_mirrors(
             logger.debug("⛔ %s %s %s: %s", sig["symbol"], sig["tag"], sig["direction"], why)
 
     opened = 0
-    live = bool(LIVE_POSTING and TARGET_CHANNEL_ID)
+    live = POSTING_ENABLED
     prices = get_live_prices_batch() if prices is None else prices
-    for sid, sig in admitted:
+    for sid, sig, channel in assign_channels(admitted, open_by_channel):
         # The market price at the moment of mirroring decides which side the
         # entry must be reached from. Without it the fill cannot be determined,
         # so better skip this cycle — the signal is still in the 90s window.
@@ -772,11 +885,11 @@ def open_mirrors(
         # without a corresponding row is a position no one will ever close.
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO trailing_positions
+                f"""
+                INSERT INTO {TABLE}
                     (src_signal_id, symbol, model, direction, entry, peak_pct, posted,
-                     mirror_price, filled_at, sl)
-                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s, NOW(), %s)
+                     mirror_price, filled_at, sl, channel_id)
+                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s, NOW(), %s, %s)
                 ON CONFLICT DO NOTHING
                 RETURNING id
                 """,
@@ -789,6 +902,9 @@ def open_mirrors(
                     live,
                     sig.get("mirror_price"),
                     sig["sl"],
+                    # The (0,) sentinel is "no real channel" (shadow) — stored
+                    # as NULL, not as a fake id.
+                    channel or None,
                 ),
             )
             created = cur.fetchone()
@@ -798,8 +914,8 @@ def open_mirrors(
             continue
         if live:
             cornix, info = entry_messages(sig)
-            _post(conn, cornix)
-            _post(conn, info)
+            _post(conn, cornix, channel)
+            _post(conn, info, channel)
         conn.commit()
         opened += 1
         logger.info(
@@ -816,15 +932,18 @@ def close_mirror(conn, row: dict, reason: str, mark: float | None, post: bool = 
     trigger.
     """
     cmd, info = close_messages(row, reason, mark)
-    if post and LIVE_POSTING and TARGET_CHANNEL_ID and row["posted"]:
-        # Only close what was opened. A `Close` on a never-posted
+    if post and POSTING_ENABLED and row["posted"]:
+        # Only close what was opened, and ONLY in the channel it was opened in:
+        # Cornix' `Close` acts symbol-wide per channel, so the wrong channel
+        # would flatten a different trade — or none. A `Close` on a never-posted
         # position would be a command against a foreign trade in the live channel.
-        _post(conn, cmd)
-        _post(conn, info)
+        channel = row.get("channel_id") or TARGET_CHANNELS[0]
+        _post(conn, cmd, channel)
+        _post(conn, info, channel)
     with conn.cursor() as cur:
         cur.execute(
-            """
-            UPDATE trailing_positions
+            f"""
+            UPDATE {TABLE}
             SET closed_at = NOW(), close_reason = %s, close_mark_pct = %s
             WHERE id = %s AND closed_at IS NULL
             """,
@@ -979,7 +1098,7 @@ def poll_open_mirrors(
             if has_filled(row["entry"], row["mirror_price"], float(price)):
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE trailing_positions SET filled_at = NOW() WHERE id = %s AND filled_at IS NULL",
+                        f"UPDATE {TABLE} SET filled_at = NOW() WHERE id = %s AND filled_at IS NULL",
                         (row["id"],),
                     )
                 conn.commit()
@@ -1038,7 +1157,7 @@ def poll_open_mirrors(
             # would re-arm the trail below a long-standing peak.
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE trailing_positions SET peak_pct = %s WHERE id = %s",
+                    f"UPDATE {TABLE} SET peak_pct = %s WHERE id = %s",
                     (state.peak_pct, row["id"]),
                 )
             conn.commit()
@@ -1060,18 +1179,23 @@ def poll_open_mirrors(
 
 
 def main() -> None:
-    mode = "LIVE" if (LIVE_POSTING and TARGET_CHANNEL_ID) else "SHADOW"
-    logger.info(f"=== 🪝 TRAILING CLOSE BOT STARTED ({mode}) ===")
+    mode = "LIVE" if POSTING_ENABLED else "SHADOW"
+    logger.info(f"=== 🪝 TRAILING CLOSE BOT STARTED ({mode}, profile={PROFILE}) ===")
+    n_ch = len(TARGET_CHANNELS) if TARGET_CHANNELS != (0,) else 0
     logger.info(
         f"Roster: {len(ROSTER)} legs from {SOURCE_REPORT} · act={ACTIVATION_PCT}% · x={RETRACE_FRAC:.0%} · "
-        f"cap={SLOT_CAP} (expected avg {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f}) · "
+        f"cap={SLOT_CAP}/channel × {n_ch or 1} channel(s) "
+        f"(expected avg {EXPECTED_OCC_MEAN:.0f} / p95 {EXPECTED_OCC_P95:.0f}) · "
+        f"exposure cap {EXPOSURE_CAP or 'OFF'} · "
         f"re-entry lock {REENTRY_LOCK_H:.1f}h on {'/'.join(REENTRY_LOCKING_REASONS)}"
     )
     if mode == "SHADOW":
-        logger.warning(
-            "SHADOW: TRAILING_BOT_LIVE_POSTING=1 and CH_TRAILING are needed to post. "
-            "The bot tracks and logs but writes no outbox row."
+        gate = (
+            "TRAILING_BOT_LIVE_POSTING=1 and CH_TRAILING"
+            if PROFILE == "trail"
+            else ("TRAILING_FREE_LIVE_POSTING=1 and CH_TRAILING_FREE_A/B")
         )
+        logger.warning(f"SHADOW: {gate} are needed to post. The bot tracks and logs but writes no outbox row.")
 
     # Optional because the reconnect in the except block below may fail: then
     # the loop continues with conn=None and tries again at the next poll

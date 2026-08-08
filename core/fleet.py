@@ -388,4 +388,19 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 291,
         "restart_interval": None,
     },
+    # ── Unrestricted trailing twin (T-2026-KYT-9050-117) ──────────────────────
+    # Bot 40's engine under TRAILING_BOT_PROFILE=free: no admission caps, ALL
+    # roster trades spread evenly over CH_TRAILING_FREE_A/B (2 × Cornix-500).
+    # Own table trailing_free_positions, own gate TRAILING_FREE_LIVE_POSTING
+    # (default 0); channels fall back to CH_SHADOW_TEST (not Cornix-executed).
+    # Last in the list with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py). New entry only supervised after a
+    # watchdog restart (FLEET read at watchdog import) ⇒ operator gate.
+    {
+        "name": "Trailing Free Bot",
+        "script": "44_trailing_free_bot.py",
+        "group": "ai",
+        "start_delay": 299,
+        "restart_interval": None,
+    },
 ]
