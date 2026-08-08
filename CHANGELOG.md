@@ -1,3 +1,35 @@
+## [2026-08-08] Correction: ODS1's and FIF2's own channels are NOT Cornix-executed (T-2026-KYT-9050-118)
+
+Operator correction (Michi): `CH_NEW_IDEAS` is not Cornix-executed, and neither is the FIF
+channel. Documentation only — **no behaviour, no restart**; both bot files are AST-identical to
+`main` modulo docstrings and comments (verified).
+
+Two places in the repo asserted that ODS1's **own** channel is Cornix-executed:
+`42_ai_ods1_bot.py`'s `MAX_EMITS_PER_CYCLE` comment and the matching test docstring in
+`backtest/test_ods1_entry.py`. Both date from T-2026-KYT-9050-106. `CH_ODS1` is unset and
+resolves to `CH_NEW_IDEAS` (`core/config.py`), so posts there produce forward measurement, not
+fills.
+
+* **The cap is still right, for one of the two reasons it gave.** The other half of the same
+  sentence is the real execution path and is unchanged: ODS1 holds a roster seat, so bot 40
+  mirrors each signal into `CH_TRAILING`, and that channel *is* executed. A burst still lands
+  against a per-channel cap of 500 there.
+* **Retracted (2026-08-07 alarm).** FIF2's containment holds after all. Its docstring said
+  the FIF channel is not
+  Cornix-executed, and that is true — the alarm I raised on 2026-08-07, that this containment
+  was untrue in the live configuration, is withdrawn. The imprecision was only that no distinct
+  FIF channel
+  exists: `CH_FIF2` → `CH_FIF1` → `CH_NEW_IDEAS`, so FIF2 shares the cohort channel with ODS1.
+  Now stated that way, with the roster seat named as the single path out of the containment.
+* **Retracted.** T-115 and T-116 repeatedly framed ODS1 geometry changes as "money-affecting,
+  operator sign-off required" on the strength of a Cornix-executed channel that does not exist.
+  That was an inference from "live on deploy by design rather than by omission" — which says the
+  bot posts, not that it is filled — and both PR reviews inherited the framing from the PR body
+  rather than checking it. The escalation was narrower than claimed; the part that genuinely
+  touches money is the roster seat into `CH_TRAILING`.
+* **ODS1's bracket stays unchanged** (operator, 2026-08-08), consistent with T-116's NO-CHANGE
+  verdict.
+
 ## [2026-08-08] ODS1 bracket re-derived from its own replay — NO CHANGE (T-2026-KYT-9050-116)
 
 ODS1 came out net negative in its first two live days (45 closed, Σ −120 % of stake, Ø −2.67 %,

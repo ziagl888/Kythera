@@ -215,11 +215,20 @@ STARVATION_LOG_EVERY_S = 3600
 
 # Flood protection. The entry rule describes a MARKET-WIDE event: a BTC-led rally
 # that liquidates shorts satisfies "px >= +3 % and 4h OI <= -2 %" on dozens of
-# correlated alts in the same 5-minute poll. Without a bound one cycle can emit
-# the whole qualifying universe (527 symbols in coins.json) into a Cornix-executed
-# channel — and because ODS1 holds a roster seat, bot 40 mirrors each signal into
-# CH_TRAILING as well, so the burst lands in TWO channels against a per-channel
-# cap of 500. EPD3-SHORT was estimated low once and delivered ~484/day.
+# correlated alts in the same 5-minute poll. Without a bound one cycle can emit the
+# whole qualifying universe (527 symbols in coins.json) — and because ODS1 holds a
+# roster seat, bot 40 mirrors each signal into CH_TRAILING as well — and THAT is
+# where a per-channel cap of 500 binds, because the cap is a Cornix construct and
+# cannot bind on a channel Cornix does not watch. EPD3-SHORT was estimated low once
+# and delivered ~484/day.
+#
+# Correction (operator, 2026-08-08): this comment used to call THIS bot's own
+# channel Cornix-executed. It is not. `CH_ODS1` is unset and resolves to
+# `CH_NEW_IDEAS` (core/config.py), and that cohort channel is not Cornix-executed —
+# posts here produce forward measurement, not fills. The execution path that does
+# cost money is the OTHER one named above: the roster seat, which routes this bot's
+# `sl`/`targets` through `40_trailing_close_bot` into `CH_TRAILING`. The cap is
+# therefore still needed for exactly one of the two reasons it used to give.
 #
 # `find_candidates` already sorts strictest-divergence-first, so truncation keeps
 # the events T-096 measured as the strongest rather than an arbitrary subset.

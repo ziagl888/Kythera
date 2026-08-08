@@ -308,12 +308,18 @@ def test_ods1_uses_the_shared_anchor():
 def test_emissions_are_bounded_per_cycle():
     """The entry rule is a MARKET-WIDE mechanic: one BTC-led short squeeze puts
     dozens of correlated alts over the threshold in the same poll. Unbounded, a
-    single cycle could post the whole qualifying universe into a Cornix-executed
-    channel — and the roster seat mirrors each one into CH_TRAILING too, so the
-    burst hits two channels against a per-channel cap of 500. EPD3-SHORT was
-    estimated low once and delivered ~484/day."""
+    single cycle could post the whole qualifying universe — and the roster seat
+    mirrors each one into CH_TRAILING too, which is where a per-channel cap of 500
+    binds: the cap is a Cornix construct and cannot bind on a channel Cornix does
+    not watch. EPD3-SHORT was estimated low once and delivered ~484/day.
+
+    This docstring used to call ODS1's OWN channel Cornix-executed. It is not
+    (operator, 2026-08-08): `CH_ODS1` resolves to `CH_NEW_IDEAS`, which posts but is
+    not executed. The bound still matters for the other half of the same sentence —
+    the roster seat routes these signals into `CH_TRAILING`, which IS executed.
+    """
     assert ods1.MAX_EMITS_PER_CYCLE > 0
-    assert ods1.MAX_EMITS_PER_CYCLE <= 25, "a burst must not be able to fill a Cornix channel"
+    assert ods1.MAX_EMITS_PER_CYCLE <= 25, "a burst must not be able to fill the trailing channel"
 
 
 class _FakeCursor:

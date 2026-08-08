@@ -31,8 +31,8 @@ comes back. This bot only posts the two rungs and the initial SL; the breakeven
 move is **Cornix channel configuration**. Without it the runner carries the full
 SL instead of 0, and the live geometry is not the one that was measured.
 
-Since T-2026-KYT-9050-115 that precondition is LIVE, not deferred. The FIF
-channel itself is still not Cornix-executed, but the roster seat granted in that
+Since T-2026-KYT-9050-115 that precondition is LIVE, not deferred. The cohort
+channel this bot posts to is still not Cornix-executed, but the roster seat in that
 task routes this bot's signals through ``40_trailing_close_bot``, which reposts
 the source's ``sl`` and ``targets`` verbatim via ``build_cornix_block`` into
 ``CH_TRAILING`` — and that channel IS Cornix-executed. So these rungs now reach a
@@ -57,13 +57,19 @@ against. ``confidence`` on every post is the vol's trailing percentile.
 
 Containment and gates (why live-by-default is safe here)
 --------------------------------------------------------
-Posts go to ``CH_FIF2`` -> fallback ``CH_FIF1`` (the FIF channel). That channel
-is currently NOT Cornix-executed — FIF1 runs negative edge and the operator
-turned the channel off in Cornix — so live posts here produce forward
-measurement, not fills (operator decision 2026-08-06). Kill switches, any one
-of which suffices: ``FIF2_LIVE_POSTING=0`` (shadow-only), ``CH_FIF2=0``
-(shadow-only via the ``_ch_override`` contract), or a ``("FIF2", <dir>)``
-``_LIFECYCLE`` entry in ``core/shadow_gate``.
+Posts go to ``CH_FIF2`` -> fallback ``CH_FIF1``. Neither is set in ``.env``, so in
+the current configuration both fall through to ``CH_NEW_IDEAS`` — there is no
+distinct "FIF channel" to speak of, and this bot shares the new-ideas cohort
+channel with ODS1. That does not weaken the containment: ``CH_NEW_IDEAS`` is not
+Cornix-executed either (operator, 2026-08-08), so live posts here produce forward
+measurement, not fills. Kill switches, any one of which suffices:
+``FIF2_LIVE_POSTING=0`` (shadow-only), ``CH_FIF2=0`` (shadow-only via the
+``_ch_override`` contract), or a ``("FIF2", <dir>)`` ``_LIFECYCLE`` entry in
+``core/shadow_gate``.
+
+The one path out of that containment is the roster seat below — it is the reason
+this bot's geometry can cost money at all, and it is worth keeping the two apart
+when reasoning about risk here.
 
 The roster seat this section originally deferred ("if FIF2 shows positive live
 edge, feeding its trades into bot 40 is a separate operator decision") was granted
