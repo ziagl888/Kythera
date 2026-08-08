@@ -150,6 +150,9 @@ EXPECTED_WATCHDOG_VIEW = [
     # merge order and both entries now sit in it.
     ("AI ODS1 Detector", "42_ai_ods1_bot.py", 283, None),
     ("AI FIF2 Mirror", "43_ai_fif2_bot.py", 291, None),
+    # T-2026-KYT-9050-117: the unrestricted trailing twin (bot 40's engine,
+    # profile=free) — deliberate fleet extension, existing delays unchanged.
+    ("Trailing Free Bot", "44_trailing_free_bot.py", 299, None),
 ]
 
 # Groups rendered by the dashboard CSS (.group-core/.group-ai/.group-strategy/

@@ -170,6 +170,17 @@ CH_FIF2 = _ch_override("CH_FIF2", CH_FIF1)
 # unset CH_MAIN (0) forces shadow-only in 34_ai_max1_bot.py.
 CH_MAX1 = _ch_override("CH_MAX1", CH_MAIN)
 
+# Unrestricted trailing twin (bot 44, T-2026-KYT-9050-117): bot 40's engine run
+# under TRAILING_BOT_PROFILE=free — no slot scarcity, no exposure cap, ALL
+# roster trades spread evenly over these TWO channels (Cornix caps 500 per
+# channel, so two channels ≈ 1000 seats). Until the real channels exist both
+# fall back to CH_SHADOW_TEST, which is not Cornix-executed (containment), and
+# TRAILING_FREE_LIVE_POSTING defaults to 0 — the same double safety net as
+# bot 40. NEVER enter an existing trading channel here: the bot posts
+# `Close <SYMBOL>`, and that acts symbol-wide on ALL trades in the channel.
+CH_TRAILING_FREE_A = _ch_override("CH_TRAILING_FREE_A", CH_SHADOW_TEST)
+CH_TRAILING_FREE_B = _ch_override("CH_TRAILING_FREE_B", CH_SHADOW_TEST)
+
 
 TELEGRAM_CHANNELS = {
     "Fast In And Out": CH_FAST_IN_OUT,
