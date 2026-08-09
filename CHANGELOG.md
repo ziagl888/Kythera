@@ -32,6 +32,26 @@ modulo comments (verified).
   because the failure mode outlives this diff: a swallowed stderr is a failed measurement, not
   evidence of absence.
 
+## [2026-08-09] Liq-cascade EXIT replay for bot 40 — close open trades into a cascade? (T-2026-KYT-9050-121)
+
+Michi's follow-up to the T-120 entry gates: "liquidations start running against my open
+position → close immediately as protection". That uses IN-TRADE information (untested — the
+entry-gate negatives don't cover it), and it fixes the T-052 accounting flaw: a closed loser
+also FREES ITS SLOT, credited here at the book's net-per-slot-day (T-042 metric).
+
+* **`tools/liq_exit_replay_study.py`:** counterfactual replay on the trailing book from the
+  T-120 snapshot (no new export; the triggering forced order's own `avg_price` is the exit
+  print). Trigger = the pre-registered T-120 cascade cuts, only strictly inside the position's
+  open interval. Variants per cut: V0 unconditional, V1 only if ≥50% levered in the red
+  (−2.5% unlevered @20×), V2 ≥100% (−5.0%) — conditions re-arm on later cascades. Results
+  decompose per realized close_reason so "SL damage avoided" vs "TRAIL wins truncated" are
+  separate numbers (the T-052 trap is measured, not assumed). 5 DB-free tests.
+* **First smoke (6.0 liq days, 1,421 mirrors — NOT evidence):** V0 wrecks the book
+  (Δ −147 on 15m/n≥2; TRAIL truncation −708 vs SL+SOURCE_CLOSED saved +540). Michi's
+  conditional variants narrow it to roughly flat raw (−2…−20) and slightly positive only
+  after the slot credit (+2…+21), with val/test halves disagreeing — flush-before-bounce is
+  visibly real on this book. Conclusive run ~2026-08-24 with T-095/T-120.
+
 ## [2026-08-09] Funding × forced-liquidation entry-gate pilot, snapshot-driven (T-2026-KYT-9050-120)
 
 After T-134 (funding alone: direction-confirmed, magnitude-weak), T-094 (OI gate: NO EDGE) and

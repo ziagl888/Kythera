@@ -103,6 +103,28 @@ book (bot-40 arm, pre-builds T-095), full `funding_rates`, full `liq_events`.
 - `tools/funding_liq_gate_study.py` — snapshot-driven study (features, cells, gate eval, report).
 - `backtest/test_funding_liq_gate_study.py` — DB-free tests on synthetic fixtures.
 
+## Companion: liq-cascade EXIT replay on the bot-40 book (T-2026-KYT-9050-121)
+
+Michi (2026-08-09): entry gates show nothing on the trailing book — but "liquidations start
+running against my open position → close immediately as protection" uses IN-TRADE information
+and is untested. `tools/liq_exit_replay_study.py` replays that rule counterfactually on the same
+snapshot (no new export needed; the trigger's own `avg_price` is the exit print).
+
+Acceptance criteria (binary):
+- AK1: counterfactual exit = first pre-registered cascade (same T-120 cuts, imported) strictly
+  inside the position's open interval; events before entry never trigger. — Test: window/edge tests.
+- AK2: Michi's conditional variants — V0 unconditional, V1 only if mark ≤ −2.5% unlevered
+  (≈ −50% levered @20×), V2 ≤ −5% (≈ −100%); conditions re-arm on later cascades. — Test:
+  qualifying-exit tests.
+- AK3: the T-052 accounting flaw is fixed: freed slot-days are credited at the book's
+  net-per-slot-day baseline AND results decompose per realized close_reason (SL damage avoided
+  vs TRAIL wins truncated shown separately). — Test: accounting fixture.
+- AK4: MIN_LIQ_DAYS discipline shared with T-120 (`--smoke` below 21 days, stamped NOT
+  CONCLUDABLE); positions only count when their full life lies inside liq coverage. — Test:
+  window restriction test + guard reuse.
+
+Out of scope: any live monitor change (separate task + Michi gate — money-affecting).
+
 ## Run plan
 
 1. **Now (VPS session, 5 min):** export snapshot, run `--smoke` → validates plumbing end-to-end on
