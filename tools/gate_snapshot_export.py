@@ -51,6 +51,33 @@ def main() -> None:
                 c = ts_cols[0]
                 span = f"  [{c}: {df[c].min()} .. {df[c].max()}]"
             print(f"{name:10s} {len(df):>9,d} rows{span}", flush=True)
+
+        # T-123: market-squeeze episodes + targeted ticker_10s slices around
+        # them, so the flatten replay can price counterfactual closes. Episodes
+        # are minutes-per-days rare, so the slices stay small — this is what
+        # makes a price table affordable inside the snapshot at all.
+        from tools.funding_liq_gate_study import market_breadth_minutes, squeeze_episodes
+
+        eps = squeeze_episodes(market_breadth_minutes(dfs["liq"]))
+        dfs["episodes"] = eps
+        slices = []
+        for ep in eps.itertuples(index=False):
+            t0 = ep.start - pd.Timedelta(minutes=10)
+            t1 = ep.end + pd.Timedelta(minutes=5)
+            slices.append(
+                pd.read_sql(
+                    "SELECT ts, symbol, price FROM ticker_10s WHERE ts BETWEEN %(t0)s AND %(t1)s",
+                    conn,
+                    params={"t0": t0, "t1": t1},
+                )
+            )
+        ticker = (
+            pd.concat(slices, ignore_index=True).drop_duplicates(["symbol", "ts"])
+            if slices
+            else pd.DataFrame(columns=["ts", "symbol", "price"])
+        )
+        dfs["ticker_slices"] = ticker
+        print(f"episodes   {len(eps):>9,d} rows  ticker_slices {len(ticker):,d} rows", flush=True)
     finally:
         conn.close()
 
