@@ -373,8 +373,13 @@ FLEET: list[dict[str, Any]] = [
     },
     # ── FIF2 vol-gated ladder mirror (T-2026-KYT-9050-112) ────────────────────
     # Mirrors fresh ai_signals arrivals whose symbol clears the rolling q80 of
-    # sym_vol_4h; posts the measured t104 ladder to CH_FIF2 (fallback: the FIF
-    # channel, currently not Cornix-executed — that is the containment).
+    # sym_vol_4h; posts the measured t104 ladder to CH_FIF2. With CH_FIF2 and
+    # CH_FIF1 both unset the chain ends at CH_NEW_IDEAS — there is no distinct
+    # FIF channel — and that channel is not Cornix-executed, so posting there
+    # produces forward measurement rather than fills. That is NOT a containment:
+    # FIF2 holds a trailing roster seat (core/trailing_roster.py), so bot 40
+    # mirrors these signals into CH_TRAILING, which IS executed. The channel is
+    # the quiet path; the seat is the money path (T-2026-KYT-9050-115/118).
     # delay 291 was chosen to leave 283 free for ODS1 (PR #276, then in flight on
     # a parallel branch) so the monotonicity guard holds regardless of merge
     # order — ODS1 landed first, and both entries now sit in that order. Last in

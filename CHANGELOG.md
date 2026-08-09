@@ -1,3 +1,37 @@
+## [2026-08-09] There is no FIF channel — the four remaining sites now say where the post lands (T-2026-KYT-9050-119)
+
+Follow-up `#T118-2`. T-118 fixed the sites that were WRONG about execution; these four were right
+about execution and only stale in naming, so they were left out of that diff on purpose. Each
+named "the FIF channel" as if it were a destination. It is not one: `CH_FIF2` → `CH_FIF1` →
+`CH_NEW_IDEAS`, and with both overrides unset the chain simply ends at the cohort channel.
+Documentation only — **no behaviour, no restart**; `core/fleet.py` is AST-identical to `main`
+modulo comments (verified).
+
+* **Swept:** `core/fleet.py` (FIF2 fleet entry), `.env.example` (`FIF2_LIVE_POSTING`),
+  `README.md` (fleet table, bot 43) and `docs/NEW_IDEAS_BOTS.md` (FIF1-successor note). Each now
+  carries the resolved chain. The `CH_FIF1` per-bot override stays documented where it is genuinely an
+  override (`docs/NEW_IDEAS_BOTS.md` VPS checklist and the channel-collision note); it is the
+  *fallback destination* wording that was misleading, not the variable.
+* **A second cap that never bound.** Both `core/fleet.py` and `.env.example` called the channel's
+  non-execution "the containment", inherited from T-112 and carried forward by the first cut of
+  this PR. It contains nothing. FIF2 has held a trailing roster seat since T-115
+  (`core/trailing_roster.py`), so bot 40 mirrors these signals into `CH_TRAILING`, which IS
+  Cornix-executed — the bot's own docstring has said so since T-118. Both sites now name the
+  channel as the quiet path and the seat as the money path. Same defect class as T-118's own
+  "a cap that cannot bind is not a second cap", found by review on this diff.
+* **Retracted, not deleted:** `docs/NEW_IDEAS_BOTS.md`'s FIF1 deploy note said "Cornix tracking
+  of the posted signals is the validation". That was accurate on 2026-07-07 and stopped being
+  accurate with the operator's 2026-08-08 statement. The sentence is kept verbatim under a dated
+  retraction pointing at T-118 — same handling as the T-115/T-116 retractions, so a later reader
+  sees both what was believed and when it stopped being true.
+* **A measurement corrected en route:** the scoping pass reported `.env.example` as clean and
+  filed that as a ledger correction. It was not clean. Git Bash rewrote
+  `git show origin/main:.env.example` into `origin\main;.env.example` (MSYS path conversion on
+  the leading dot), `2>/dev/null` swallowed the resulting `fatal`, and an empty grep read as a
+  negative finding. The phrasing was there at line 25 and is fixed. Recorded in `AUDIT_TODO.md`
+  because the failure mode outlives this diff: a swallowed stderr is a failed measurement, not
+  evidence of absence.
+
 ## [2026-08-08] The trailing bot becomes two arms — bot 44 posts everything, twice the seats (T-2026-KYT-9050-117)
 
 Operator decision (Michi): keep bot 40 exactly as it is for its channel, and add an unfiltered
