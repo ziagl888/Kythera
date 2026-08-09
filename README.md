@@ -78,7 +78,7 @@ Grouped by role. Names match the process names in `main_watchdog.py`.
 | `32_ai_trm1_bot.py` | AI TRM1 Detector | Transition-resolution BTC trades (Report 15 S10) — `CH_NEW_IDEAS` |
 | `33_ai_fif1_bot.py` | AI FIF1 Detector | ML filter over the Fast-In-Out signal stream (Report 15 S11) — `CH_NEW_IDEAS` |
 | `34_ai_max1_bot.py` | AI MAX1 Detector | High-conviction throttle over the RUB2-SHORT model (1-3 trades/day) — `CH_MAIN`, gated by `MAX1_LIVE_POSTING` (default off) |
-| `43_ai_fif2_bot.py` | AI FIF2 Mirror | Vol-gated ladder mirror of fresh fleet signals (T-110/T-111 evidence chain) — `CH_FIF2` → FIF channel, gated by `FIF2_LIVE_POSTING` |
+| `43_ai_fif2_bot.py` | AI FIF2 Mirror | Vol-gated ladder mirror of fresh fleet signals (T-110/T-111 evidence chain) — `CH_FIF2` → `CH_FIF1` → `CH_NEW_IDEAS` (not Cornix-executed), gated by `FIF2_LIVE_POSTING` |
 
 ### Market intelligence
 | Script | Process | Role |
