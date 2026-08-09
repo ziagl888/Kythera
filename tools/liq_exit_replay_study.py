@@ -141,8 +141,10 @@ def prepare_book(trailing: pd.DataFrame) -> pd.DataFrame:
 
 def against_events(liq: pd.DataFrame) -> dict[tuple[str, str], tuple[np.ndarray, np.ndarray]]:
     """(symbol, side) → (ts_ns ascending, avg_price). avg_price is the executed
-    print of the forced order — the counterfactual exit price."""
-    liq = liq.sort_values("ts")
+    print of the forced order — the counterfactual exit price. Rows without a
+    price cannot serve as an exit print (the schema allows NULL even though the
+    collector never writes it) — dropped rather than poisoning marks with NaN."""
+    liq = liq.dropna(subset=["avg_price"]).sort_values("ts")
     out: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
     for (s, sd), g in liq.groupby(["symbol", "side"], sort=False):
         ts = g["ts"].values.astype("datetime64[ns]").astype("int64")
