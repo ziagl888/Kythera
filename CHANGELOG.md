@@ -32,6 +32,27 @@ modulo comments (verified).
   because the failure mode outlives this diff: a swallowed stderr is a failed measurement, not
   evidence of absence.
 
+## [2026-08-09] Market-wide short-squeeze / long-flush detector, directional H3 gates (T-2026-KYT-9050-122)
+
+Michi: can we detect a MARKET-WIDE short or long squeeze? Yes — split the T-120 market-breadth
+feature by liquidation side: short squeeze = many distinct symbols printing BUY forced orders
+(shorts covered) with BUY-dominant imbalance; long flush = the mirror.
+
+* **Probe finding (6 collector days):** the big liquidation waves are mostly SYMMETRIC (median
+  |side imbalance| 0.07 at the total-breadth q99 — both sides get liquidated in violent
+  two-sided volatility); strictly one-sided (≥2×) squeezes are a minutes-per-days rarity
+  (2 short-squeeze episodes totalling 3 min, 1 long-flush episode of 7 min).
+* **New pre-registered features + gates in `tools/funding_liq_gate_study.py`:**
+  `mkt_syms_buy_15m` / `mkt_syms_sell_15m` / `mkt_liq_imb_15m`, and H3s (veto SHORT entries
+  during a market short squeeze: BUY breadth ≥ 110 ∧ imbalance ≥ +0.25) / H3l (veto LONG
+  entries during a market long flush: SELL breadth ≥ 130 ∧ imbalance ≤ −0.25) — side-breadth
+  q95 cuts from the feature marginals only (T-116 discipline). ~1.2% / ~2.3% of minutes active.
+* **Scope cut (documented):** no market-squeeze exit-trigger arm in the T-121 replay yet — the
+  counterfactual needs a per-symbol price at an arbitrary market-trigger time, which the
+  snapshot lacks. Future extension via a price table in the snapshot.
+* Conclusive evaluation ~2026-08-24 with T-095/T-120/T-121. Prior-art caution: market-regime
+  overlays were historically no-edge (T-029/T-031) — detection is cheap, tradeability is open.
+
 ## [2026-08-09] Liq-cascade EXIT replay for bot 40 — close open trades into a cascade? (T-2026-KYT-9050-121)
 
 Michi's follow-up to the T-120 entry gates: "liquidations start running against my open

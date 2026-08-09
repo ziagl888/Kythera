@@ -192,7 +192,16 @@ def test_funding_zone_cuts():
 
 
 def _feature_frame(rows: list[dict]) -> pd.DataFrame:
-    defaults = {"liq_n_against_15m": 0, "liq_n_against_60m": 0, "liq_n_with_60m": 0, "mkt_syms_15m": 0, "fund_24h": 0.0}
+    defaults = {
+        "liq_n_against_15m": 0,
+        "liq_n_against_60m": 0,
+        "liq_n_with_60m": 0,
+        "mkt_syms_15m": 0,
+        "mkt_syms_buy_15m": 0,
+        "mkt_syms_sell_15m": 0,
+        "mkt_liq_imb_15m": 0.0,
+        "fund_24h": 0.0,
+    }
     return pd.DataFrame([{**defaults, **r} for r in rows])
 
 
@@ -236,6 +245,49 @@ def test_h3_threshold_is_a_tail_cut():
     )
     h3 = gate_masks(t)[f"H3 market-cascade veto (>={MKT_CASCADE_SYMS} syms/15m)"]
     assert list(h3) == [True, False]
+
+
+def test_side_split_market_breadth_and_imbalance():
+    # BUY prints on 2 symbols, SELL on 1 — within the 15m window before entry.
+    trades = make_trades([{"id": 1, "symbol": "AAAUSDT", "direction": "LONG", "open_time_utc": "2026-08-05 12:00:00"}])
+    liq = make_liq(
+        [
+            ("2026-08-05 11:50:00", "AAAUSDT", "BUY", 1.0),
+            ("2026-08-05 11:51:00", "BBBUSDT", "BUY", 1.0),
+            ("2026-08-05 11:52:00", "BBBUSDT", "BUY", 1.0),  # same symbol again → still 2 distinct
+            ("2026-08-05 11:53:00", "CCCUSDT", "SELL", 1.0),
+            ("2026-08-05 11:20:00", "DDDUSDT", "SELL", 1.0),  # outside 15m window
+        ]
+    )
+    out = liq_features(trades, liq).iloc[0]
+    assert out["mkt_syms_buy_15m"] == 2
+    assert out["mkt_syms_sell_15m"] == 1
+    assert out["mkt_liq_imb_15m"] == pytest.approx((2 - 1) / 3)  # positive = BUY-dominant (short squeeze)
+
+
+def test_h3s_h3l_directional_market_gates():
+    from tools.funding_liq_gate_study import MKT_FLUSH_SELL_SYMS, MKT_SQUEEZE_BUY_SYMS, MKT_SQUEEZE_IMB
+
+    squeeze = {"mkt_syms_buy_15m": MKT_SQUEEZE_BUY_SYMS, "mkt_liq_imb_15m": MKT_SQUEEZE_IMB}
+    flush = {"mkt_syms_sell_15m": MKT_FLUSH_SELL_SYMS, "mkt_liq_imb_15m": -MKT_SQUEEZE_IMB}
+    t = _feature_frame(
+        [
+            {"direction": "SHORT", **squeeze},  # SHORT into a short squeeze → veto
+            {"direction": "LONG", **squeeze},  # LONG rides the squeeze → not vetoed by H3s
+            {
+                "direction": "SHORT",
+                "mkt_syms_buy_15m": MKT_SQUEEZE_BUY_SYMS,
+                "mkt_liq_imb_15m": 0.1,
+            },  # broad but symmetric
+            {"direction": "LONG", **flush},  # LONG into a long flush → veto
+            {"direction": "SHORT", **flush},  # SHORT rides the flush → not vetoed by H3l
+        ]
+    )
+    masks = gate_masks(t)
+    h3s = masks[f"H3s market short-squeeze veto (SHORT, buy>={MKT_SQUEEZE_BUY_SYMS} & imb>={MKT_SQUEEZE_IMB})"]
+    h3l = masks[f"H3l market long-flush veto (LONG, sell>={MKT_FLUSH_SELL_SYMS} & imb<=-{MKT_SQUEEZE_IMB})"]
+    assert list(h3s) == [True, False, False, False, False]
+    assert list(h3l) == [False, False, False, True, False]
 
 
 # ── evaluation ────────────────────────────────────────────────────────────────

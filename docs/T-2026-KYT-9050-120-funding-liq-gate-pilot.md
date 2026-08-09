@@ -45,7 +45,16 @@ The genuinely open cell is **liquidation features and the funding × liquidation
   observed feature marginal (~10% skip). Derived from the feature DISTRIBUTION only, never from
   outcomes — the T-116 pre-registration discipline holds.
 
-All three are entry-time-only (no forming data, as-of backward joins) and are evaluated per
+- **H3s/H3l (directional market squeeze/flush veto, T-2026-KYT-9050-122, added 2026-08-09 before
+  any conclusive evidence):** split H3's breadth by liquidation SIDE. Market-wide short squeeze =
+  broad BUY prints (shorts force-covered, prices spiking) with BUY-dominant imbalance → veto
+  SHORT entries; market-wide long flush = the mirror → veto LONG entries. Probe on the 6 collector
+  days: big waves are mostly SYMMETRIC (median |imbalance| 0.07 at the total-breadth q99) and
+  strict ≥2× one-sidedness is a minutes-per-days rarity — cuts therefore pre-registered at the
+  side-breadth q95 (BUY ≥ 110 / SELL ≥ 130 distinct symbols/15 min) with |imbalance| ≥ 0.25
+  (~1.2% / ~2.3% of minutes active). Feature-marginal-derived only (T-116 discipline).
+
+All are entry-time-only (no forming data, as-of backward joins) and are evaluated per
 direction — Michi's target metric is a per-direction WR lift, but per repo Rule 8 the verdict
 hangs on WR **and** raw net-PnL expectancy moving together.
 
