@@ -69,6 +69,17 @@ CASCADE_MIN_N_60 = 3  # same-symbol events against direction, 60 min
 # outcome-derived (T-116 discipline holds); amended in the spec doc before any
 # conclusive evidence exists.
 MKT_CASCADE_SYMS = 140  # distinct symbols with any liq in 15 min (q90 tail event)
+# Directional market cascades (T-2026-KYT-9050-122, pre-registered 2026-08-09
+# from the 6-day FEATURE marginals only): a market-wide short squeeze = broad
+# BUY prints (shorts force-covered, prices spiking) with few SELL prints; a
+# long flush is the mirror. The probe showed big liquidation waves are mostly
+# SYMMETRIC (median |imbalance| 0.07 at the total-breadth q99) and strict
+# >=2x one-sidedness is a minutes-per-days rarity — cuts therefore sit at the
+# side-breadth q95 (BUY 110 / SELL 131 → rounded) with imbalance >= 0.25,
+# ~1.2% / ~2.3% of minutes active. Distribution-derived, never outcome-derived.
+MKT_SQUEEZE_BUY_SYMS = 110  # distinct symbols with BUY (short-liq) prints in 15 min
+MKT_FLUSH_SELL_SYMS = 130  # distinct symbols with SELL (long-liq) prints in 15 min
+MKT_SQUEEZE_IMB = 0.25  # |(buy − sell) / (buy + sell)| breadth imbalance floor
 MIN_SINCE_CAP_MIN = 1440.0
 MIN_CELL_N = 30  # cells below this are shown but never argued from
 MIN_SKIP_N = 20  # a gate that skips fewer trades than this cannot be a candidate
@@ -145,6 +156,7 @@ def liq_features(trades: pd.DataFrame, liq: pd.DataFrame, windows_min: tuple[int
     sym_arrs = {str(s): _ns(g["ts"]) for s, g in liq.groupby("symbol", sort=False)}
     mkt_ts = _ns(liq["ts"])
     mkt_sym = liq["symbol"].to_numpy()
+    mkt_side = liq["side"].to_numpy()
 
     for w in windows_min:
         t[f"liq_n_against_{w}m"] = 0
@@ -179,6 +191,17 @@ def liq_features(trades: pd.DataFrame, liq: pd.DataFrame, windows_min: tuple[int
     lo = np.searchsorted(mkt_ts, tt_all - 15 * _NS_PER_MIN, side="left")
     hi = np.searchsorted(mkt_ts, tt_all, side="left")
     t["mkt_syms_15m"] = [int(len(np.unique(mkt_sym[a:b]))) if b > a else 0 for a, b in zip(lo, hi, strict=True)]
+
+    # Side-split market breadth (T-122): BUY prints = shorts force-covered
+    # (upward pressure), SELL prints = longs force-closed (downward pressure).
+    for side, col in (("BUY", "mkt_syms_buy_15m"), ("SELL", "mkt_syms_sell_15m")):
+        m = mkt_side == side
+        sts, ssym = mkt_ts[m], mkt_sym[m]
+        lo_s = np.searchsorted(sts, tt_all - 15 * _NS_PER_MIN, side="left")
+        hi_s = np.searchsorted(sts, tt_all, side="left")
+        t[col] = [int(len(np.unique(ssym[a:b]))) if b > a else 0 for a, b in zip(lo_s, hi_s, strict=True)]
+    mkt_tot = t["mkt_syms_buy_15m"] + t["mkt_syms_sell_15m"]
+    t["mkt_liq_imb_15m"] = (t["mkt_syms_buy_15m"] - t["mkt_syms_sell_15m"]) / mkt_tot.where(mkt_tot > 0)
 
     for w in windows_min:
         tot = t[f"liq_n_against_{w}m"] + t[f"liq_n_with_{w}m"]
@@ -229,6 +252,15 @@ def gate_masks(t: pd.DataFrame) -> dict[str, pd.Series]:
         f"H2a cascade-against-15m veto (n>={CASCADE_MIN_N_15})": t["liq_n_against_15m"] >= CASCADE_MIN_N_15,
         f"H2b cascade-against-60m veto (n>={CASCADE_MIN_N_60})": cascade_60,
         f"H3 market-cascade veto (>={MKT_CASCADE_SYMS} syms/15m)": t["mkt_syms_15m"] >= MKT_CASCADE_SYMS,
+        # T-122 directional market cascades: veto the direction the squeeze runs
+        # AGAINST — SHORT entries into a market-wide short squeeze (broad BUY
+        # prints push prices up), LONG entries into a market-wide long flush.
+        f"H3s market short-squeeze veto (SHORT, buy>={MKT_SQUEEZE_BUY_SYMS} & imb>={MKT_SQUEEZE_IMB})": (
+            ~is_long & (t["mkt_syms_buy_15m"] >= MKT_SQUEEZE_BUY_SYMS) & (t["mkt_liq_imb_15m"] >= MKT_SQUEEZE_IMB)
+        ),
+        f"H3l market long-flush veto (LONG, sell>={MKT_FLUSH_SELL_SYMS} & imb<=-{MKT_SQUEEZE_IMB})": (
+            is_long & (t["mkt_syms_sell_15m"] >= MKT_FLUSH_SELL_SYMS) & (t["mkt_liq_imb_15m"] <= -MKT_SQUEEZE_IMB)
+        ),
     }
 
 
