@@ -32,6 +32,34 @@ modulo comments (verified).
   because the failure mode outlives this diff: a swallowed stderr is a failed measurement, not
   evidence of absence.
 
+## [2026-08-09] Funding × forced-liquidation entry-gate pilot, snapshot-driven (T-2026-KYT-9050-120)
+
+After T-134 (funding alone: direction-confirmed, magnitude-weak), T-094 (OI gate: NO EDGE) and
+T-096 (OI×funding events: refuted), the open cell is the funding × liquidation INTERACTION —
+untestable until `liq_events` (collector 41, live since 2026-08-03) has ≥ 21 days of coverage.
+This builds the full pilot now so the conclusive run (~2026-08-24, with T-095) is two commands.
+
+* **Extraction-first (operator requirement):** `tools/gate_snapshot_export.py` pulls the four
+  study tables (deduped `closed_ai_signals`, `trailing_positions` book, `funding_rates`,
+  `liq_events`) read-only into ONE DuckDB file under `.local/`; the study
+  (`tools/funding_liq_gate_study.py`) runs DB-free on the snapshot. Deliberately not the Z1
+  AnalyticsExporter — its keyset cursor needs a unique `id` column these tables lack.
+* **Pre-registered gates**, paired gate-on/off per direction, candidate only if kept-WR AND
+  kept-raw-expectancy improve in BOTH chrono halves (Rule 8): H1 crowded-side flush/squeeze
+  veto (extreme funding in trade direction + liq cascade against it), H2a/b cascade-against
+  15/60 min, H3 market-wide cascade. Liq features are counts/clusters/recency only — the
+  `!forceOrder` stream is a 1 order/s/symbol SAMPLE; notional sums are secondary. Shared
+  builders reused (`core.funding_features`, `FEE_PER_SIDE`).
+* **Guards:** `MIN_LIQ_DAYS=21` refuses a verdict on thin coverage; `--smoke` runs the plumbing
+  and stamps NOT CONCLUDABLE. 14 DB-free synthetic-fixture tests (no-lookahead window edges,
+  SELL/BUY direction mapping, DST-aware localization, candidate math, snapshot tz roundtrip).
+* **First smoke run (VPS, 2026-08-09, 6.0 liq days):** pipeline green end-to-end (10,439 fleet
+  trades + 1,412 bot-40 mirrors in-window, 100% funding coverage). It caught one degenerate
+  pre-registration: the market always has liquidations printing (median 78 distinct symbols per
+  15 min), so H3's original ≥5-symbol cut skipped 100% of entries. Recalibrated to ≥140 (q90 of
+  the observed FEATURE marginal, ~10% skip) — distribution-derived, never outcome-derived; the
+  T-116 discipline holds, amended in the spec doc before any conclusive evidence exists.
+
 ## [2026-08-08] The trailing bot becomes two arms — bot 44 posts everything, twice the seats (T-2026-KYT-9050-117)
 
 Operator decision (Michi): keep bot 40 exactly as it is for its channel, and add an unfiltered
