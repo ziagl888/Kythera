@@ -9,10 +9,16 @@ modulo comments (verified).
 
 * **Swept:** `core/fleet.py` (FIF2 fleet entry), `.env.example` (`FIF2_LIVE_POSTING`),
   `README.md` (fleet table, bot 43) and `docs/NEW_IDEAS_BOTS.md` (FIF1-successor note). Each now
-  carries the resolved chain plus why the containment holds — the terminal channel is not
-  Cornix-executed. The `CH_FIF1` per-bot override stays documented where it is genuinely an
+  carries the resolved chain. The `CH_FIF1` per-bot override stays documented where it is genuinely an
   override (`docs/NEW_IDEAS_BOTS.md` VPS checklist and the channel-collision note); it is the
   *fallback destination* wording that was misleading, not the variable.
+* **A second cap that never bound.** Both `core/fleet.py` and `.env.example` called the channel's
+  non-execution "the containment", inherited from T-112 and carried forward by the first cut of
+  this PR. It contains nothing. FIF2 has held a trailing roster seat since T-115
+  (`core/trailing_roster.py`), so bot 40 mirrors these signals into `CH_TRAILING`, which IS
+  Cornix-executed — the bot's own docstring has said so since T-118. Both sites now name the
+  channel as the quiet path and the seat as the money path. Same defect class as T-118's own
+  "a cap that cannot bind is not a second cap", found by review on this diff.
 * **Retracted, not deleted:** `docs/NEW_IDEAS_BOTS.md`'s FIF1 deploy note said "Cornix tracking
   of the posted signals is the validation". That was accurate on 2026-07-07 and stopped being
   accurate with the operator's 2026-08-08 statement. The sentence is kept verbatim under a dated
