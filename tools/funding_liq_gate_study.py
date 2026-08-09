@@ -61,7 +61,14 @@ EXTREME_BPS = 3.0  # T-134 extreme-funding cut, reused verbatim
 WINDOWS_MIN = (15, 60)
 CASCADE_MIN_N_15 = 2  # same-symbol events against direction, 15 min
 CASCADE_MIN_N_60 = 3  # same-symbol events against direction, 60 min
-MKT_CASCADE_SYMS = 5  # distinct symbols with any liq in 15 min
+# Recalibrated 2026-08-09 after the first --smoke run: the market ALWAYS has
+# liquidations printing (median 78 distinct symbols per 15 min over the first
+# 6 liq_events days; ~206k events/6d) — the original pre-registered 5 skipped
+# 100% of entries, a degenerate gate. New cut = q90 of the observed FEATURE
+# marginal (137 → rounded 140, skips ~10%). Distribution-derived, NOT
+# outcome-derived (T-116 discipline holds); amended in the spec doc before any
+# conclusive evidence exists.
+MKT_CASCADE_SYMS = 140  # distinct symbols with any liq in 15 min (q90 tail event)
 MIN_SINCE_CAP_MIN = 1440.0
 MIN_CELL_N = 30  # cells below this are shown but never argued from
 MIN_SKIP_N = 20  # a gate that skips fewer trades than this cannot be a candidate

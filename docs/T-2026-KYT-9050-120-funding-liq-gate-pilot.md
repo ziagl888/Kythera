@@ -39,6 +39,11 @@ The genuinely open cell is **liquidation features and the funding × liquidation
   in the last 15/60 min predicts adverse continuation → veto.
 - **H3 (market-wide cascade veto):** ≥ K distinct symbols printing liquidations within 15 min =
   market-wide deleveraging; new entries in either direction underperform → veto.
+  _Amended 2026-08-09 (before any conclusive evidence):_ the original K=5 was degenerate — the
+  market always has liquidations printing (median 78 distinct symbols/15 min over the first
+  6 collector days), so K=5 skipped 100% of entries in the smoke run. New K=140 = q90 of the
+  observed feature marginal (~10% skip). Derived from the feature DISTRIBUTION only, never from
+  outcomes — the T-116 pre-registration discipline holds.
 
 All three are entry-time-only (no forming data, as-of backward joins) and are evaluated per
 direction — Michi's target metric is a per-direction WR lift, but per repo Rule 8 the verdict
@@ -72,8 +77,9 @@ book (bot-40 arm, pre-builds T-095), full `funding_rates`, full `liq_events`.
   (Rule 7 — no reinvention); fee = `tools.walkforward_sim.FEE_PER_SIDE` (no invented fee).
 - No outcome conditioning (T-106) and no deriving thresholds from outcomes under the same gate
   (T-116): gates are pre-registered above, thresholds are round numbers fixed in this doc BEFORE
-  the conclusive run (cascade ≥ 3 same-symbol events/60 min, ≥ 2/15 min, market cascade ≥ 5
-  distinct symbols/15 min, extreme funding ±3 bps = the T-134 cuts).
+  the conclusive run (cascade ≥ 3 same-symbol events/60 min, ≥ 2/15 min, market cascade ≥ 140
+  distinct symbols/15 min — amended from the degenerate 5, see H3 — extreme funding ±3 bps = the
+  T-134 cuts).
 - Evaluation: chronological val/test halves must AGREE (sign) per direction; paired gate-on/off on
   identical trade populations; a gate is a candidate only if kept-WR AND kept-raw-mean improve in
   BOTH halves with a non-trivial skip count.

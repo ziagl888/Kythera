@@ -22,6 +22,7 @@ from tools.funding_liq_gate_study import (  # noqa: E402
     CASCADE_MIN_N_60,
     EXTREME_BPS,
     MIN_SINCE_CAP_MIN,
+    MKT_CASCADE_SYMS,
     ROUND_TRIP_FEE,
     attach_funding,
     chrono_halves,
@@ -219,6 +220,22 @@ def test_h1_gate_requires_crowding_and_cascade():
     )
     h1 = gate_masks(t)["H1 crowded-side flush/squeeze veto"]
     assert list(h1) == [True, False, False, True, False, False]
+
+
+def test_h3_threshold_is_a_tail_cut():
+    # Smoke run 2026-08-09: the market has liquidations printing at all times
+    # (median 78 distinct symbols/15 min) — a single-digit breadth cut skips
+    # ~100% of entries and the gate is degenerate. Pin the threshold above the
+    # observed median so a future "simplification" cannot silently regress it.
+    assert MKT_CASCADE_SYMS > 78
+    t = _feature_frame(
+        [
+            {"direction": "LONG", "mkt_syms_15m": MKT_CASCADE_SYMS},
+            {"direction": "LONG", "mkt_syms_15m": MKT_CASCADE_SYMS - 1},
+        ]
+    )
+    h3 = gate_masks(t)[f"H3 market-cascade veto (>={MKT_CASCADE_SYMS} syms/15m)"]
+    assert list(h3) == [True, False]
 
 
 # ── evaluation ────────────────────────────────────────────────────────────────
