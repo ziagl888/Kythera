@@ -265,6 +265,63 @@ def gate_masks(t: pd.DataFrame) -> dict[str, pd.Series]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# market-squeeze episodes (T-122 detector, shared with the T-123 flatten replay
+# and the snapshot export — single source of the pre-registered cuts)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def market_breadth_minutes(liq: pd.DataFrame, window_min: int = 15) -> pd.DataFrame:
+    """Per-minute rolling side breadth: distinct symbols with BUY/SELL prints in
+    the trailing ``window_min`` minutes. Minute m covers (m−w, m] — the value is
+    known at the END of minute m. Returns index=minute (UTC), columns
+    buy/sell/imb (imb NaN when no prints at all)."""
+    if not len(liq):
+        return pd.DataFrame(columns=["buy", "sell", "imb"])
+    ev = liq.dropna(subset=["ts"]).copy()
+    ev["minute"] = ev["ts"].dt.floor("min")
+    sets = ev.groupby(["minute", "side"])["symbol"].agg(set).unstack()
+    idx = pd.date_range(sets.index.min(), sets.index.max(), freq="min", tz="UTC")
+    sets = sets.reindex(idx)
+    for side in ("BUY", "SELL"):
+        if side not in sets.columns:
+            sets[side] = None
+        sets[side] = sets[side].apply(lambda x: x if isinstance(x, set) else set())
+    rows: list[tuple[int, int]] = []
+    buy_win: list[set] = []
+    sell_win: list[set] = []
+    for b_set, s_set in zip(sets["BUY"], sets["SELL"], strict=True):
+        buy_win.append(b_set)
+        sell_win.append(s_set)
+        if len(buy_win) > window_min:
+            buy_win.pop(0)
+            sell_win.pop(0)
+        rows.append((len(set().union(*buy_win)), len(set().union(*sell_win))))
+    out = pd.DataFrame(rows, columns=["buy", "sell"], index=idx)
+    tot = out["buy"] + out["sell"]
+    out["imb"] = (out["buy"] - out["sell"]) / tot.where(tot > 0)
+    return out
+
+
+def squeeze_episodes(breadth: pd.DataFrame) -> pd.DataFrame:
+    """Contiguous minutes where the pre-registered H3s/H3l cuts hold. Returns
+    (side ∈ {SHORT_SQUEEZE, LONG_FLUSH}, start, end) with end INCLUSIVE — the
+    squeeze is observable from the end of the ``start`` minute onward."""
+    if not len(breadth):
+        return pd.DataFrame(columns=["side", "start", "end"])
+    masks = {
+        "SHORT_SQUEEZE": (breadth["buy"] >= MKT_SQUEEZE_BUY_SYMS) & (breadth["imb"] >= MKT_SQUEEZE_IMB),
+        "LONG_FLUSH": (breadth["sell"] >= MKT_FLUSH_SELL_SYMS) & (breadth["imb"] <= -MKT_SQUEEZE_IMB),
+    }
+    rows = []
+    for side, m in masks.items():
+        m = m.fillna(False)
+        grp = (m != m.shift()).cumsum()
+        for _, g in m[m].groupby(grp[m]):
+            rows.append({"side": side, "start": g.index[0], "end": g.index[-1]})
+    return pd.DataFrame(rows, columns=["side", "start", "end"]).sort_values("start").reset_index(drop=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # evaluation
 # ──────────────────────────────────────────────────────────────────────────────
 

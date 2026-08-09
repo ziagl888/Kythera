@@ -32,6 +32,28 @@ modulo comments (verified).
   because the failure mode outlives this diff: a swallowed stderr is a failed measurement, not
   evidence of absence.
 
+## [2026-08-09] Squeeze-flatten replay — close ALL against-side bot-40 positions at squeeze onset (T-2026-KYT-9050-123)
+
+Michi's clarified intent behind the T-122 detector: when a market-wide short squeeze fires,
+close ALL open shorts immediately (long flush → all longs). This lifts the T-122 scope cut.
+
+* **Shared episode detector:** `market_breadth_minutes` + `squeeze_episodes` in
+  `tools/funding_liq_gate_study.py` (per-minute rolling 15-min side-breadth union, the
+  pre-registered H3s/H3l cuts — single source for gates, export and replay).
+* **Snapshot extension:** `tools/gate_snapshot_export.py` computes episodes at export time and
+  pulls targeted `ticker_10s` slices ([start−10min, end+5min], all symbols) into new
+  `ticker_slices` + `episodes` tables — episodes are rare, so the price table stays affordable
+  (~800k rows / +29 MB for 6 days).
+* **`tools/squeeze_flatten_replay.py`:** every against-side position open at onset
+  (= episode start + 1 min, no lookahead) is counterfactually closed at its symbol's last
+  ticker print ≤ onset (180 s tolerance; uncovered positions excluded AND counted — ticker_10s
+  is a gappy ~40s tape, T-035: fine for marks, not touches). First-episode-wins; T-121
+  accounting reused (slot credit, per-close_reason decomposition). 6 DB-free tests.
+* **First smoke (6.2 liq days — NOT evidence):** 44 episodes (13 squeeze / 31 flush), 584 of
+  1,546 positions flattened, price coverage 100%. Raw Δ −240.6, incl. slot credit −74.7, BOTH
+  halves negative — the T-052 pattern again: TRAIL truncation (−529) dwarfs the saved
+  SL/SOURCE_CLOSED/TIME_STOP damage (+289). Conclusive run ~2026-08-24.
+
 ## [2026-08-09] Market-wide short-squeeze / long-flush detector, directional H3 gates (T-2026-KYT-9050-122)
 
 Michi: can we detect a MARKET-WIDE short or long squeeze? Yes — split the T-120 market-breadth
