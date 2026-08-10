@@ -89,7 +89,7 @@ def _load_dashboard():
 
 
 import core.fleet as fleet
-import core.shadow_scanners as shadow_scanners
+import core.hosted_fleet as hosted_fleet
 
 wd = _load_watchdog()
 dash = _load_dashboard()
@@ -108,13 +108,15 @@ EXPECTED_WATCHDOG_VIEW = [
     ("Housekeeping", "6_housekeeping.py", 10, None),
     ("Pattern detector", "7_pattern_detector.py", 15, None),
     ("AI Trade Monitor", "8_ai_trade_monitor.py", 23, None),
-    ("AI SR Bot", "9_ai_sr_bot.py", 31, None),
+    # T-2026-KYT-9050-135: bots 9 (31), 15 (79), 30 (191), 33 (215) and 43 (291)
+    # gave up their entries and now poll inside "Signal Consumer Runner" at the
+    # end of the list. The freed delays stay free — the surviving entries keep
+    # theirs, which is the property this anchor exists to pin.
     ("Pump Dump Detector", "10_pump_dump_detector.py", 39, None),
     ("AI MIS1 Detector", "11_ai_mis_bot.py", 47, None),
     ("AI ATS1 Detector", "12_ai_ats_bot.py", 55, None),
     ("AI RUB1 Detector", "13_ai_rub_bot.py", 63, None),
     ("AI ATB1 Detector", "14_ai_atb_bot.py", 71, None),
-    ("AI AIM2 Detector", "15_ai_master_bot.py", 79, None),
     ("SMC FOREX Detector", "16_smc_forex_metals_bot.py", 87, None),
     ("Mayank Bot", "17_mayank_bot.py", 95, None),
     ("AI ABR1 Detector", "18_ai_abr1_bot.py", 103, None),
@@ -128,10 +130,8 @@ EXPECTED_WATCHDOG_VIEW = [
     ("Bot Regime Analyzer", "27_bot_regime_analyzer.py", 167, None),
     ("Signal Orchestrator", "28_signal_orchestrator.py", 175, None),
     ("UFI1 Fib Bot", "29_ufi1_bot.py", 183, None),
-    ("AI PEX1 Detector", "30_ai_pex1_bot.py", 191, None),
     ("AI FMR1 Detector", "31_ai_fmr1_bot.py", 199, None),
     ("AI TRM1 Detector", "32_ai_trm1_bot.py", 207, None),
-    ("AI FIF1 Detector", "33_ai_fif1_bot.py", 215, None),
     ("AI MAX1 Detector", "34_ai_max1_bot.py", 223, None),
     # T-2026-CU-9050-103 (K9/OIC): deliberate fleet extension — the anchor grows
     # along with it, the delays/order of the existing entries remain unchanged.
@@ -149,7 +149,6 @@ EXPECTED_WATCHDOG_VIEW = [
     # and left 283 free for exactly that, so monotonicity holds under either
     # merge order and both entries now sit in it.
     ("AI ODS1 Detector", "42_ai_ods1_bot.py", 283, None),
-    ("AI FIF2 Mirror", "43_ai_fif2_bot.py", 291, None),
     # T-2026-KYT-9050-117: the unrestricted trailing twin (bot 40's engine,
     # profile=free) — deliberate fleet extension, existing delays unchanged.
     ("Trailing Free Bot", "44_trailing_free_bot.py", 299, None),
@@ -161,6 +160,10 @@ EXPECTED_WATCHDOG_VIEW = [
     # deliberate fleet consolidation (4 entries out, 1 in), existing delays
     # unchanged.
     ("Shadow Scanner Runner", "45_shadow_scanner_runner.py", 311, None),
+    # T-2026-KYT-9050-135: one process for the five signal consumers —
+    # deliberate fleet consolidation (5 entries out, 1 in), existing delays
+    # unchanged.
+    ("Signal Consumer Runner", "46_signal_consumer_runner.py", 319, None),
 ]
 
 # Groups rendered by the dashboard CSS (.group-core/.group-ai/.group-strategy/
@@ -218,21 +221,23 @@ def test_scripts_are_unique():
     assert len(scripts) == len(set(scripts))
 
 
-# ── Hosted scanners: started by nobody, reaped by the watchdog ───────────────
-# T-2026-KYT-9050-133. The four scanner scripts live on as bots but not as
-# processes. Two properties have to hold together, and getting either wrong is a
-# money-path bug: listed in the fleet ⇒ started twice (once standalone, once by
-# the runner); missing from the orphan sweep ⇒ a survivor of the switchover
-# restart keeps scanning next to the runner.
+# ── Hosted bots: started by nobody, reaped by the watchdog ───────────────────
+# T-2026-KYT-9050-133 (scanners 36-39) and -135 (consumers 9/15/30/33/43). Those
+# scripts live on as bots but not as processes. Two properties have to hold
+# together, and getting either wrong is a money-path bug: listed in the fleet ⇒
+# started twice (once standalone, once by its runner); missing from the orphan
+# sweep ⇒ a survivor of the switchover restart keeps scanning/polling next to
+# the runner.
 
 
-def test_hosted_scanners_are_not_started():
+def test_hosted_bots_are_not_started():
     scripts = {p["script"] for p in fleet.FLEET}
-    for hosted in shadow_scanners.HOSTED_SCRIPTS:
-        assert hosted not in scripts, hosted
-    assert shadow_scanners.RUNNER_SCRIPT in scripts
+    for runner, hosted_scripts in hosted_fleet.HOSTED_SCRIPTS_BY_RUNNER.items():
+        assert runner in scripts, runner
+        for hosted in hosted_scripts:
+            assert hosted not in scripts, hosted
 
 
-def test_hosted_scanners_stay_reapable_as_orphans():
-    for hosted in shadow_scanners.HOSTED_SCRIPTS:
+def test_hosted_bots_stay_reapable_as_orphans():
+    for hosted in hosted_fleet.ALL_HOSTED_SCRIPTS:
         assert hosted in wd.FLEET_SCRIPTS, hosted

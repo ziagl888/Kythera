@@ -85,31 +85,14 @@ SCANNERS: tuple[ScannerSpec, ...] = (
     ScannerSpec("39_ai_xsm1_bot.py", "XSM1_BOT", WEEKLY, minute=37, hour=0, weekday=0),
 )
 
-# Script names the runner hosts — consumed by core/bot_catalog.py (report
-# mapping keeps resolving tags onto these) and by main_watchdog.py (they are no
-# longer started, so a survivor from before the switch is an orphan to reap).
+# Script names the runner hosts. Registered in core/hosted_fleet.py, which owns
+# the one "a hosted bot is active exactly when its runner runs and its own park
+# marker is absent" rule for ALL runners (T-2026-KYT-9050-135 generalised the
+# expansion that used to live here when 45 was the only runner) — read from
+# there by core/bot_catalog.py (report mapping keeps resolving tags onto these
+# scripts) and main_watchdog.py (they are no longer started, so a survivor from
+# before the switch is an orphan to reap).
 HOSTED_SCRIPTS: tuple[str, ...] = tuple(spec.script for spec in SCANNERS)
-
-
-def expand_hosted(scripts: set[str], parked: set[str]) -> set[str]:
-    """``scripts`` plus the hosted scanners, when the runner is among them.
-
-    The ONE definition of "a hosted scanner is active exactly when the runner
-    runs and its OWN park marker is absent" — the same check the runner does
-    before each scan, seen from the report side. Two callers restate nothing:
-    ``core.bot_catalog.active_scripts()`` and the tools/ mirror
-    ``tools.fleet_realized_audit.resolve_active_scripts()`` (which exists only
-    because the audit needs a parked-dir override, so it can point at the LIVE
-    checkout from a worktree). Without the expansion every LIS/TSM/SKW/XSM/XSR
-    leg drops into the "inactive" bucket of those reports the moment the fleet
-    switches over — the four bots scan, but no longer own a fleet entry.
-
-    Pure set arithmetic, no filesystem: the caller decides where ``parked``
-    comes from. Returns a new set; the input is not mutated.
-    """
-    if RUNNER_SCRIPT not in scripts:
-        return set(scripts)
-    return set(scripts) | {script for script in HOSTED_SCRIPTS if script not in parked}
 
 
 def last_slot(spec: ScannerSpec, now: datetime) -> datetime:

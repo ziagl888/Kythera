@@ -1,3 +1,81 @@
+## [2026-08-11] Fleet consolidation cluster C: the five signal consumers share one process (T-2026-KYT-9050-135)
+
+Bots 9 (SRA), 15 (AIM2), 30 (PEX1), 33 (FIF1) and 43 (FIF2) were five permanent Python interpreters
+— each with its own pandas/numpy import and its own minconn-2 DB pool — for one job: polling a
+table. They scan no coins; they wake up every 60 s (bot 9: every 300 s), ask the DB "anything new?"
+and sleep again. They now run inside one process. Five fleet entries out, one in; **effective only
+after a watchdog restart** (FLEET is read at watchdog import), so the old constellation keeps
+running unchanged until Michi restarts.
+
+Unlike cluster B (T-133, four shadow-only scanners) this cluster reaches real money: 15 and 33 post
+LIVE, and 43 fills a trailing roster seat that bot 40 mirrors into the Cornix-executed channel.
+Behaviour neutrality is therefore the merge condition, and it is proven rather than asserted — see
+the AST parity check below.
+
+* **`46_signal_consumer_runner.py` (new, fleet entry `start_delay=319`, group `ai`):** imports the
+  five bot modules via importlib (the `44_trailing_free_bot.py` pattern) and calls their
+  `startup()` once and their `run_poll()` on their own cadence. No posting, cooldown, gate,
+  watermark or dedup code is touched; each poll core still opens, rolls back and closes its OWN DB
+  connection per cycle, so a poisoned transaction cannot leak from one bot into the next — they
+  never share one.
+* **The bot files were split at exactly one seam.** `main()` became `startup()` + `run_poll()` +
+  the unchanged `while True: run_poll(); time.sleep(N)`, so every file stays runnable standalone
+  for debugging. An AST comparison against the pre-split files shows the two functions are
+  statement-for-statement identical to the old `main()`, with exactly three deliberate exceptions:
+  bots 30/33 turn the idle-mode `time.sleep(60); continue` into a `return` (the caller owns the
+  sleep now), and loop state that used to be a local of `main()` (bot 30's watermark, bot 33's
+  seen-set, bot 43's samples/seen/bootstrap) became a module-level global of the SAME module —
+  still one instance per bot, still invisible to the other four. The only literal that changed is
+  the leading indentation inside two of bot 9's SQL heredocs.
+* **`core/signal_consumers.py` (new):** the roster and the cadence arithmetic as pure, DB-free,
+  clock-injectable code. A due time is re-armed from the moment a poll FINISHES, never from the
+  moment it was due — which is exactly what `poll(); sleep(N)` did per process, and what keeps a
+  slow poll from queueing a backlog behind itself.
+* **`core/hosted_fleet.py` (new):** T-133 built the hosted-bot expansion for ONE runner. With a
+  second runner the rule ("a hosted bot is active exactly when its runner runs and its own park
+  marker is absent") moved into a registry over all runners instead of being restated per runner —
+  the T-133 review explicitly killed a second drifting mirror, and this keeps that promise.
+  `core/bot_catalog.py`, `tools/fleet_realized_audit.py` and `main_watchdog.py` now read the
+  registry; `core/shadow_scanners.py` keeps only what is genuinely runner-specific (its roster and
+  its slot schedule).
+* **Per-bot arming.** A bot polls only after its own `startup()` succeeded, and `startup()` runs at
+  its first dispatch rather than at process start. That is the money-path-safe direction: bots
+  30/33 build their anti-replay state there (watermark from `MAX(spike_time)`, seen-set of the live
+  window), so polling without it would repost a window that has already been posted — and a bot
+  parked at boot bootstraps from the CURRENT window when it is unparked, not from hours ago. A
+  failed startup leaves the bot unarmed and is retried on its next cycle, which is the standalone
+  equivalent of dying in `main()` and being restarted by the watchdog.
+* **Per-bot error isolation (bot-29 pattern):** every startup and every poll runs in its own
+  `try/except`; an exception is logged with its traceback and the other four keep polling. Same for
+  the import — a module that fails to load leaves the other four working. Every consumer is
+  re-armed in a `finally`, so a persistent failure costs one cycle per interval instead of turning
+  into a hot loop.
+* **Park granularity survives.** Before every poll the runner checks the **five original** markers
+  `control/parked/<script>.py`, per bot and per cycle, so
+  `python -c "from core.process_control import park; park('33_ai_fif1_bot.py')"` still silences
+  FIF1 alone; unparking takes effect on the next cycle without a restart. Parking the runner stops
+  all five, which is what parking a process means. What is lost: the five bots no longer have their
+  own dashboard row, so the marker file above is their park path.
+* **The documented divergence, and why it is logged.** Dispatch is sequential, so a bot's period is
+  now `interval + own duration + the siblings dispatched before it`, where five processes only paid
+  `interval + own duration`. Starvation is impossible (one pass runs each due bot at most once, and
+  due times come from completion), but slow degradation is not — the tightest freshness bound in
+  the cluster is FIF2's `MAX_MIRROR_AGE_S` of 240 s. A poll that starts more than 30 s late
+  therefore logs a WARNING naming the bot and the delay, so the cost is visible before it costs
+  mirrors.
+* **Model-reload semantics kept.** The 24 h artifact reload of bots 9 and 15 stays inside
+  `run_poll()` — hoisting it into `startup()` would pin the runner to the artifacts it booted with
+  and turn a deploy into a fleet restart. Pinned by a test.
+* **`main_watchdog.py`:** the five script names stay in the orphan-reap set although they are never
+  started — during the switchover restart the old processes are alive right up to the moment the
+  tree stops, and a survivor would poll next to the runner: two schedulers on the same cooldown
+  rows, i.e. a race for a duplicate LIVE post.
+* **Tests:** `backtest/test_signal_consumer_runner.py` (new, 66 tests) covers the cadences, the
+  arming rule, per-bot park markers, error isolation, the lateness warning and the report identity;
+  DB-free, no sleeping, injected clock. `test_shadow_runner.py` 69/69, `test_fleet_definition.py`
+  10/10, `test_bot_catalog.py` 51/51, `test_dashboard_fleet_registry.py` 23/23 and the sixteen
+  existing suites of the five bots stay green; `guard.py verify` 24/24.
+
 ## [2026-08-11] Fleet consolidation cluster B: the four rule-based shadow scanners share one process (T-2026-KYT-9050-133)
 
 Bots 36 (LIS1), 37 (TSM1), 38 (SKW1) and 39 (XSM1/XSR1) were four permanent Python interpreters —

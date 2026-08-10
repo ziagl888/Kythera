@@ -487,167 +487,185 @@ def process_ai_trade(conn, symbol, direction, module, live_price, confidence, ch
 # MAIN LOOP
 
 
-def main():
+def startup() -> None:
+    """One-time init: load both direction artifacts.
+
+    Everything main() did before entering its loop (T-2026-KYT-9050-135).
+    """
     logger.info("=== 🧠 ML SR BOT ACTIVATED ===")
     load_models()
 
-    while True:
-        # Daily reload picks up an artifact deploy without a restart; a failed
-        # reload does not discard a loaded artifact.
-        expected = sra_expected_features()
-        for direction in SRA_ARTIFACT_PATHS:
-            MODELS[direction] = maybe_reload(MODELS[direction], expected)
 
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                # 1. Fresh S&R trades from the master table
-                cur.execute("""
-                    SELECT id, time, coin, direction, entry
-                    FROM active_trades_master
-                    WHERE strategy = 'Support Resistance'
-                    AND posted >= NOW() - INTERVAL '60 minutes'
-                """)
-                fresh_trades = cur.fetchall()
+def run_poll() -> None:
+    """One poll cycle — the body of main()'s loop, unchanged.
 
-                for trade in fresh_trades:
-                    t_id, t_time, coin, direction, entry = trade
+    The reload lives INSIDE the cycle on purpose: maybe_reload is what picks up
+    an artifact deploy without a restart, so it has to run per poll (it applies
+    its own 24 h age check), not once at startup.
+    """
+    # Daily reload picks up an artifact deploy without a restart; a failed
+    # reload does not discard a loaded artifact.
+    expected = sra_expected_features()
+    for direction in SRA_ARTIFACT_PATHS:
+        MODELS[direction] = maybe_reload(MODELS[direction], expected)
 
-                    # FIX P1.20: per-trade isolation. Previously ONE broken trade
-                    # (e.g., predict error) tore the entire iteration off and the
-                    # pass rollback discarded also the shadow inserts of all already-
-                    # processed trades. Now: commit per trade, rollback only affects
-                    # that one.
-                    try:
-                        # SRA2 shadow (T-2026-CU-9050-125): score the same candidates
-                        # independent of the SRA1 live path + monitored track.
-                        _emit_sra2_shadow(conn, coin, direction, t_time, entry)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # 1. Fresh S&R trades from the master table
+            cur.execute("""
+                SELECT id, time, coin, direction, entry
+                FROM active_trades_master
+                WHERE strategy = 'Support Resistance'
+                AND posted >= NOW() - INTERVAL '60 minutes'
+            """)
+            fresh_trades = cur.fetchall()
 
-                        artifact = MODELS.get(direction)
-                        if not artifact or not artifact['loaded']:
-                            continue  # Idle mode for that direction (trap 3)
-                        # The posting tag comes from the artifact metadata (load_artifact_json
-                        # sets tag = meta.model_id); without metadata it remains the named
-                        # legacy tag. It carries ai_signals.model, ml_predictions_master
-                        # .model_name and the cooldown key — all three must name the same
-                        # generation, otherwise the per-bot statistics mix two models
-                        # (rule 6).
-                        module_name = artifact['tag']
+            for trade in fresh_trades:
+                t_id, t_time, coin, direction, entry = trade
 
-                        # 2. Deduplication check in master log
-                        #    Transitional: also check against the old tag. Without it an
-                        #    SRA2 rollout would hold every already-processed trade as new
-                        #    and would post it a second time.
-                        cur.execute(
-                            "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name IN (%s, %s)",
-                            (t_id, module_name, SRA_LEGACY_TAG),
-                        )
-                        if cur.fetchone():
-                            continue
-
-                        # 3. Active trade check (T-2026-CU-9050-055) — checks whether for
-                        #    exactly this module/coin/direction an already-running
-                        #    unclosed trade exists. The 4h cooldown in the post path is
-                        #    a FREQUENCY lock, not a position guard: an SRA trade
-                        #    regularly runs longer, and without this check the follow-up
-                        #    signal would open a SECOND live position next to the first
-                        #    (the same lesson as RUB, T-2026-CU-9050-043).
-                        #    Pattern: 11_ai_mis_bot.py:318. The deduplication check above
-                        #    protects only against the same trade_id, not against a NEW
-                        #    setup trade on a coin that is already open.
-                        #
-                        #    The tag is also the dedup key and flips on SRA2 rollout;
-                        #    without the old tag in the IN an open SRA1 position would
-                        #    no longer block the SRA2 signal. Same tags (today) ⇒ no-op.
-                        cur.execute(
-                            "SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model IN (%s, %s)",
-                            (coin, direction, module_name, SRA_LEGACY_TAG),
-                        )
-                        if cur.fetchone():
-                            continue  # Trade runs live in AI monitor
-
-                        # 4. Indicators & features
-                        inds = get_indicators_at_time(conn, coin, t_time)
-                        if not inds:
-                            continue
-
-                        features = create_feature_row(direction, inds)
-                        if not features:
-                            continue
-
-                        # 5. XGBoost prediction
-                        #    Artifact WITH metadata: frame from the shared SRA2 builder,
-                        #    aligned to the contract — selection AND order. No fillna
-                        #    across columns: load_artifact_json has hard-validated the
-                        #    names (P0.12); missing VALUES remain NaN, the model knows
-                        #    this from training.
-                        #    Artifact WITHOUT metadata: the legacy vector, unchanged —
-                        #    it is the contract of today's deployed SRA1 model.
-                        if artifact['features']:
-                            serving = build_serving_row(direction, inds)
-                            if not serving:
-                                continue
-                            X = pd.DataFrame([serving])[artifact['features']]
-                        else:
-                            X = pd.DataFrame([features])
-                        conf = float(artifact['model'].predict_proba(X)[0, 1])
-
-                        # 6. Classification & shadow log
-                        posted = False
-                        if conf >= artifact['threshold']:
-                            # FIX (Review Batch 4): do not post NaN-ATR vectors live.
-                            # P1.20 allows missing ATR features to pass as NaN so the
-                            # scan no longer crashes — but the model has never seen NaN
-                            # in these columns in training, the confidence on it is
-                            # uncalibrated. Only shadow-log such rows, no Cornix post.
-                            if pd.isna(features.get('support_atr', np.nan)):
-                                logger.info(f"⚠️ {coin} {direction} conf {conf:.1%} — ATR missing, shadow-log only.")
-                            else:
-                                logger.info(f"🎯 Hit! {coin} {direction} has {conf:.1%} confidence.")
-                                chart_p = generate_minichart_image(coin, minutes=240)
-                                # FIX P2.30: posted from the return value — False if the
-                                # internal 4h cooldown suppressed the post.
-                                posted = process_ai_trade(conn, coin, direction, module_name, entry, conf, chart_p)
-
-                        # Everything >= SRA_SHADOW_THRESHOLD into the master history
-                        if conf >= SRA_SHADOW_THRESHOLD:
-                            cur.execute(
-                                """
-                                INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                            """,
-                                (t_id, module_name, t_time, coin, direction, entry, conf, posted),
-                            )
-                        else:
-                            # Below that only marked "done" (minimal log)
-                            cur.execute(
-                                "INSERT INTO ml_predictions_master (trade_id, model_name, coin, confidence, posted) VALUES (%s, %s, %s, %s, False)",
-                                (t_id, module_name, coin, conf),
-                            )
-                        conn.commit()
-                    except Exception as trade_err:
-                        logger.error(f"SRA1: error at trade {t_id} ({coin} {direction}): {trade_err}")
-                        # Rollback guarded — on a dead connection (DB restart)
-                        # rollback() itself throws and would otherwise propagate out
-                        # of main() and kill the process.
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            logger.error("SRA1: rollback failed — pass abort, connection is renewed.")
-                            break
-
-            conn.commit()
-        except Exception as e:
-            logger.error(f"error in loop: {e}")
-            if conn:
+                # FIX P1.20: per-trade isolation. Previously ONE broken trade
+                # (e.g., predict error) tore the entire iteration off and the
+                # pass rollback discarded also the shadow inserts of all already-
+                # processed trades. Now: commit per trade, rollback only affects
+                # that one.
                 try:
-                    conn.rollback()
-                except Exception:
-                    pass  # dead connection — close() in finally returns the slot
-        finally:
-            if conn:
-                conn.close()
+                    # SRA2 shadow (T-2026-CU-9050-125): score the same candidates
+                    # independent of the SRA1 live path + monitored track.
+                    _emit_sra2_shadow(conn, coin, direction, t_time, entry)
 
+                    artifact = MODELS.get(direction)
+                    if not artifact or not artifact['loaded']:
+                        continue  # Idle mode for that direction (trap 3)
+                    # The posting tag comes from the artifact metadata (load_artifact_json
+                    # sets tag = meta.model_id); without metadata it remains the named
+                    # legacy tag. It carries ai_signals.model, ml_predictions_master
+                    # .model_name and the cooldown key — all three must name the same
+                    # generation, otherwise the per-bot statistics mix two models
+                    # (rule 6).
+                    module_name = artifact['tag']
+
+                    # 2. Deduplication check in master log
+                    #    Transitional: also check against the old tag. Without it an
+                    #    SRA2 rollout would hold every already-processed trade as new
+                    #    and would post it a second time.
+                    cur.execute(
+                        "SELECT 1 FROM ml_predictions_master WHERE trade_id = %s AND model_name IN (%s, %s)",
+                        (t_id, module_name, SRA_LEGACY_TAG),
+                    )
+                    if cur.fetchone():
+                        continue
+
+                    # 3. Active trade check (T-2026-CU-9050-055) — checks whether for
+                    #    exactly this module/coin/direction an already-running
+                    #    unclosed trade exists. The 4h cooldown in the post path is
+                    #    a FREQUENCY lock, not a position guard: an SRA trade
+                    #    regularly runs longer, and without this check the follow-up
+                    #    signal would open a SECOND live position next to the first
+                    #    (the same lesson as RUB, T-2026-CU-9050-043).
+                    #    Pattern: 11_ai_mis_bot.py:318. The deduplication check above
+                    #    protects only against the same trade_id, not against a NEW
+                    #    setup trade on a coin that is already open.
+                    #
+                    #    The tag is also the dedup key and flips on SRA2 rollout;
+                    #    without the old tag in the IN an open SRA1 position would
+                    #    no longer block the SRA2 signal. Same tags (today) ⇒ no-op.
+                    cur.execute(
+                        "SELECT 1 FROM ai_signals WHERE symbol = %s AND direction = %s AND model IN (%s, %s)",
+                        (coin, direction, module_name, SRA_LEGACY_TAG),
+                    )
+                    if cur.fetchone():
+                        continue  # Trade runs live in AI monitor
+
+                    # 4. Indicators & features
+                    inds = get_indicators_at_time(conn, coin, t_time)
+                    if not inds:
+                        continue
+
+                    features = create_feature_row(direction, inds)
+                    if not features:
+                        continue
+
+                    # 5. XGBoost prediction
+                    #    Artifact WITH metadata: frame from the shared SRA2 builder,
+                    #    aligned to the contract — selection AND order. No fillna
+                    #    across columns: load_artifact_json has hard-validated the
+                    #    names (P0.12); missing VALUES remain NaN, the model knows
+                    #    this from training.
+                    #    Artifact WITHOUT metadata: the legacy vector, unchanged —
+                    #    it is the contract of today's deployed SRA1 model.
+                    if artifact['features']:
+                        serving = build_serving_row(direction, inds)
+                        if not serving:
+                            continue
+                        X = pd.DataFrame([serving])[artifact['features']]
+                    else:
+                        X = pd.DataFrame([features])
+                    conf = float(artifact['model'].predict_proba(X)[0, 1])
+
+                    # 6. Classification & shadow log
+                    posted = False
+                    if conf >= artifact['threshold']:
+                        # FIX (Review Batch 4): do not post NaN-ATR vectors live.
+                        # P1.20 allows missing ATR features to pass as NaN so the
+                        # scan no longer crashes — but the model has never seen NaN
+                        # in these columns in training, the confidence on it is
+                        # uncalibrated. Only shadow-log such rows, no Cornix post.
+                        if pd.isna(features.get('support_atr', np.nan)):
+                            logger.info(f"⚠️ {coin} {direction} conf {conf:.1%} — ATR missing, shadow-log only.")
+                        else:
+                            logger.info(f"🎯 Hit! {coin} {direction} has {conf:.1%} confidence.")
+                            chart_p = generate_minichart_image(coin, minutes=240)
+                            # FIX P2.30: posted from the return value — False if the
+                            # internal 4h cooldown suppressed the post.
+                            posted = process_ai_trade(conn, coin, direction, module_name, entry, conf, chart_p)
+
+                    # Everything >= SRA_SHADOW_THRESHOLD into the master history
+                    if conf >= SRA_SHADOW_THRESHOLD:
+                        cur.execute(
+                            """
+                            INSERT INTO ml_predictions_master (trade_id, model_name, time, coin, direction, entry, confidence, posted)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                            (t_id, module_name, t_time, coin, direction, entry, conf, posted),
+                        )
+                    else:
+                        # Below that only marked "done" (minimal log)
+                        cur.execute(
+                            "INSERT INTO ml_predictions_master (trade_id, model_name, coin, confidence, posted) VALUES (%s, %s, %s, %s, False)",
+                            (t_id, module_name, coin, conf),
+                        )
+                    conn.commit()
+                except Exception as trade_err:
+                    logger.error(f"SRA1: error at trade {t_id} ({coin} {direction}): {trade_err}")
+                    # Rollback guarded — on a dead connection (DB restart)
+                    # rollback() itself throws and would otherwise propagate out
+                    # of main() and kill the process.
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        logger.error("SRA1: rollback failed — pass abort, connection is renewed.")
+                        break
+
+        conn.commit()
+    except Exception as e:
+        logger.error(f"error in loop: {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass  # dead connection — close() in finally returns the slot
+    finally:
+        if conn:
+            conn.close()
+
+
+def main():
+    """Standalone entry. In the fleet 46_signal_consumer_runner.py drives the
+    two functions above instead; the file stays runnable for debugging."""
+    startup()
+    while True:
+        run_poll()
         time.sleep(300)
 
 

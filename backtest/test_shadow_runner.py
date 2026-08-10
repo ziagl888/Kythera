@@ -483,9 +483,13 @@ def test_runner_reports_the_families_of_the_bots_it_hosts():
 def test_expand_hosted_is_a_no_op_without_the_runner():
     # Pure set arithmetic, and inert when the runner is not active: parking the
     # runner (or a fleet without it) must not conjure the four bots into a
-    # report's active set.
+    # report's active set. The function moved to core/hosted_fleet.py in
+    # T-2026-KYT-9050-135 when a second runner appeared; the property is the
+    # same one, now over a registry.
+    from core.hosted_fleet import expand_hosted
+
     scripts = {"11_ai_mis_bot.py"}
-    assert ss.expand_hosted(scripts, set()) == scripts
+    assert expand_hosted(scripts, set()) == scripts
     assert scripts == {"11_ai_mis_bot.py"}  # input untouched
 
 
@@ -494,7 +498,7 @@ def test_expand_hosted_is_a_no_op_without_the_runner():
 # tools/fleet_realized_audit.resolve_active_scripts() exists only because the
 # audit needs a parked-dir override (worktree looking at the LIVE checkout's
 # control/parked). It must NOT be a second, drifting definition of "active":
-# both sides go through shadow_scanners.expand_hosted, and this pins that they
+# both sides go through hosted_fleet.expand_hosted, and this pins that they
 # agree — park-marker subtraction included. Before the expansion reached the
 # mirror, every TSM1/SKW1/XSM1/XSR1 leg was reported "inactive" while the runner
 # was scanning them.
