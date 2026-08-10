@@ -71,7 +71,7 @@ ROSTER: dict[tuple[str, str], float] = {
     ("ABR1", "LONG"): 12.954,
     ("MIS1-8h", "SHORT"): 6.062,
     ("XSM1", "LONG"): 4.708,
-    ("AIM2", "SHORT"): 4.294,
+    # ("AIM2", "SHORT"): 4.294 — struck, see RETIRED_FOR_LIVE_PNL below.
     ("ABR1", "SHORT"): 4.135,
     ("RUB1", "SHORT"): 3.943,
     ("MIS1-24h", "LONG"): 2.875,
@@ -82,7 +82,7 @@ ROSTER: dict[tuple[str, str], float] = {
     ("UFI1", "SHORT"): 1.770,
     ("SKW1", "LONG"): 1.591,
     ("AIM2", "LONG"): 1.409,
-    ("MIS1-72h", "LONG"): 0.959,
+    # ("MIS1-72h", "LONG"): 0.959 — struck, see RETIRED_FOR_LIVE_PNL below.
     ("TD_4H", "LONG"): 0.885,
     ("TD_4H", "SHORT"): 0.748,
     ("TD_1H", "LONG"): 0.745,
@@ -159,6 +159,38 @@ REJECTED_FOR_CAP: dict[tuple[str, str], float] = {
     ("BR2H", "LONG"): 528.0,
     ("EPD3", "LONG"): 581.0,
     ("TSM1", "SHORT"): 525.0,
+}
+
+#: Legs struck AFTER the fact on their own realised trailing book, with the net USD
+#: they produced there (T-2026-KYT-9050-126 / -129, operator decision Michi
+#: 2026-08-10). Unlike the two registers above — which are verdicts of the PR #198
+#: SIMULATION, i.e. decisions taken before a seat ever traded — these two seats were
+#: measured live in ``trailing_positions`` and lost money in this arm.
+#:
+#: Sizing for the figures: 2 USD margin at 17.8x = 35.60 USD notional, minus a
+#: 0.0356 USD taker round-trip (0.05 % per side). Whole book history from 2026-07-27.
+#:
+#:     MIS1-72h LONG   n=581   avg -0.798 %   -0.3197 USD/trade   total -185.72 USD
+#:     AIM2 SHORT      n=422   avg -0.493 %   -0.2109 USD/trade   total  -89.02 USD
+#:
+#: Removing both turns the arm's book from -166.69 USD to +95.04 USD; the remaining
+#: 2 059 trades earn +0.0462 USD each. This is NOT a capacity decision — occupancy
+#: runs at 109.5 mean against a ``SLOT_CAP`` of 500 and the cap has never bound
+#: (T-2026-KYT-9050-124/-125). The two seats held 51.5 % of all slot-hours for 33.5 %
+#: of the trades, so the freed capacity is more than proportional.
+#:
+#: Direction, not model: ``AIM2 LONG`` earns +21.69 USD over 164 trades in the same
+#: arm and KEEPS its seat. Both legs also keep running unchanged in the fleet's hold
+#: arm — only the trailing mirror goes.
+#:
+#: WHY the trail loses what the hold arm earns is NOT established. Five paired
+#: replays (T-2026-KYT-9050-128) failed their baseline gate; the leading hypothesis —
+#: a give-back trail clips the long right tail these two legs live on (both around
+#: 38-41 % hit rate) — remains unproven. Reverting is a one-line move per leg if that
+#: question is ever answered, which is why the measured values are kept here.
+RETIRED_FOR_LIVE_PNL: dict[tuple[str, str], float] = {
+    ("MIS1-72h", "LONG"): -185.72,
+    ("AIM2", "SHORT"): -89.02,
 }
 
 
