@@ -153,6 +153,10 @@ EXPECTED_WATCHDOG_VIEW = [
     # T-2026-KYT-9050-117: the unrestricted trailing twin (bot 40's engine,
     # profile=free) — deliberate fleet extension, existing delays unchanged.
     ("Trailing Free Bot", "44_trailing_free_bot.py", 299, None),
+    # T-2026-KYT-9050-132: the shared candle-snapshot service — deliberate fleet
+    # extension, existing delays unchanged. Idle until KYTHERA_CANDLE_SNAPSHOT
+    # is turned on.
+    ("Candle Snapshot Service", "candle_snapshot_service.py", 307, None),
 ]
 
 # Groups rendered by the dashboard CSS (.group-core/.group-ai/.group-strategy/

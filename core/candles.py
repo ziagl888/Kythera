@@ -515,6 +515,61 @@ _CANDLES_HYPER_UPSERT = (
 )
 
 
+# ── Shared-snapshot read path (T-2026-KYT-9050-132, off by default) ───────────
+#
+# KYTHERA_CANDLE_SNAPSHOT routes the three read helpers through
+# candle_snapshot_service.py — one process that reads each (symbol, tf) once per
+# candle period and serves the nine hourly scanners' overlapping windows from
+# RAM (60-75 % of the fleet's candle queries are duplicates across bots). This is
+# the ONLY hook: no bot script and no core/*_features.py builder knows about it,
+# exactly as this module's header promises ("swap the internals without touching
+# a single bot").
+#
+# With the gate off — the default, and the state this change merges in — the
+# flag check below short-circuits before the client module is even imported and
+# every read takes the SQL path it always took. With the gate on, the client
+# returns None for anything it cannot serve BYTE-IDENTICALLY (unreachable
+# service, window not covered, frame behind the last close, forming candle
+# requested, a joined row without its indicator row), and the DB path below runs
+# unchanged. Falling back is cheap; serving a subtly different frame to a
+# trading bot is not.
+_SNAPSHOT_ENV = "KYTHERA_CANDLE_SNAPSHOT"
+
+_snapshot_module: Any = None
+_snapshot_unavailable = False
+
+
+def snapshot_enabled() -> bool:
+    """True when KYTHERA_CANDLE_SNAPSHOT is explicitly truthy (default OFF).
+
+    Defined here rather than in core.candle_snapshot so the flag has exactly one
+    reading, and so the gate can be checked without importing the client at all.
+    Read at call time like every other KYTHERA_CANDLES_* flag.
+    """
+    return os.getenv(_SNAPSHOT_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _snapshot() -> Any | None:
+    """The snapshot client module, or None when the gate is off / it is unusable.
+
+    Imported lazily so this module keeps its short import chain, and so an
+    import failure degrades to the DB path (with one warning) instead of
+    breaking every read in the fleet.
+    """
+    global _snapshot_module, _snapshot_unavailable
+    if _snapshot_unavailable or not snapshot_enabled():
+        return None
+    if _snapshot_module is None:
+        try:
+            from core import candle_snapshot
+        except Exception as exc:  # noqa: BLE001 — never let this break a read
+            _snapshot_unavailable = True
+            _logger.warning("candles: snapshot client unavailable (%s) — DB path only.", exc)
+            return None
+        _snapshot_module = candle_snapshot
+    return _snapshot_module
+
+
 # ── Reads ─────────────────────────────────────────────────────────────────────
 
 
@@ -648,6 +703,19 @@ def read_candles(
     if source == "legacy":
         _assert_legacy_not_stale(conn)
     _require_open_time(columns)
+    snapshot = _snapshot()
+    if snapshot is not None:
+        df = snapshot.read_candles(
+            symbol,
+            tf,
+            limit=limit,
+            start=start,
+            end=end,
+            include_forming=include_forming,
+            columns=columns,
+        )
+        if df is not None:
+            return df
     if source == "hyper":
         # `SELECT *` on the hypertable would leak the tf/is_closed columns the
         # per-coin tables never had; None → the explicit legacy candle shape
@@ -683,6 +751,19 @@ def read_indicators(
     if source == "legacy":
         _assert_legacy_not_stale(conn)
     _require_open_time(columns)
+    snapshot = _snapshot()
+    if snapshot is not None:
+        df = snapshot.read_indicators(
+            symbol,
+            tf,
+            limit=limit,
+            start=start,
+            end=end,
+            include_forming=include_forming,
+            columns=columns,
+        )
+        if df is not None:
+            return df
     if source == "hyper":
         scope = _hyper_scope(symbol, tf)  # validates symbol/tf before touching conn
         # `SELECT *` on the hypertable would leak the tf/is_closed columns and thus
@@ -798,11 +879,36 @@ def read_candles_with_indicators(
     # indicator_column_names() catalog probe ever touches the connection.
     validate_symbol(symbol)
     validate_timeframe(tf)
+    # An explicit projection is normalised (and rejected when it is empty) BEFORE
+    # the snapshot attempt; `None` stays None so the snapshot can resolve it from
+    # the frame it already holds instead of paying the catalog probe this path
+    # exists to avoid. With the gate off the ordering is unobservable — the probe
+    # only ever ran for the None case anyway.
+    if indicator_columns is not None:
+        indicator_columns = [c for c in indicator_columns if c not in ("symbol", "open_time", "close")]
+        if not indicator_columns:
+            raise ValueError(f"no indicator columns to join for {symbol}_{tf}")
+
+    snapshot = _snapshot()
+    if snapshot is not None:
+        df = snapshot.read_candles_with_indicators(
+            symbol,
+            tf,
+            limit=limit,
+            start=start,
+            end=end,
+            include_forming=include_forming,
+            candle_columns=candle_columns,
+            indicator_columns=indicator_columns,
+        )
+        if df is not None:
+            return df
+
     if indicator_columns is None:
         indicator_columns = indicator_column_names(conn, symbol, tf)
-    indicator_columns = [c for c in indicator_columns if c not in ("symbol", "open_time", "close")]
-    if not indicator_columns:
-        raise ValueError(f"no indicator columns to join for {symbol}_{tf}")
+        indicator_columns = [c for c in indicator_columns if c not in ("symbol", "open_time", "close")]
+        if not indicator_columns:
+            raise ValueError(f"no indicator columns to join for {symbol}_{tf}")
 
     icols = _columns_sql(indicator_columns, prefix="i")
     if source == "hyper":
