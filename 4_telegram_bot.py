@@ -594,9 +594,7 @@ async def process_outbox():
                             # a bare `raise` in a sibling clause would leave the
                             # try block entirely instead of reaching it.
                             if isinstance(e, BadRequest) and is_permanent_bad_request(str(e)):
-                                mark_failed_permanently(
-                                    cur, msg_id, f"BadRequest (permanent): {e}", image_path
-                                )
+                                mark_failed_permanently(cur, msg_id, f"BadRequest (permanent): {e}", image_path)
                                 conn.commit()
                                 # The request DID reach Telegram and was refused,
                                 # so the rate-limit budget is honestly spent —
