@@ -24,7 +24,7 @@ from __future__ import annotations
 from core.bot_naming import pretty_name
 from core.fleet import FLEET
 from core.process_control import list_parked
-from core.shadow_scanners import HOSTED_SCRIPTS, RUNNER_SCRIPT
+from core.shadow_scanners import HOSTED_SCRIPTS, RUNNER_SCRIPT, expand_hosted
 
 # Family prefix → emitting script. Order matters: longest prefix wins, so
 # "ABR…" must resolve to bot 18 before the "BR…" family of bot 7 can match.
@@ -161,16 +161,13 @@ def active_scripts() -> set[str]:
     The four scanners hosted by 45_shadow_scanner_runner.py (T-2026-KYT-9050-133)
     have no fleet entry of their own anymore, but they still scan — so they
     count as active exactly when the runner runs and their OWN park marker is
-    absent. That mirrors what the runner does before each scan, and it keeps the
-    report semantics of parking a single bot: without this expansion every
-    TSM1/SKW1/XSM1/XSR1 leg would silently fall into the "inactive" bucket of
-    23_market_tracker's realised report the moment the fleet switches over.
+    absent. That rule lives in shadow_scanners.expand_hosted() because the
+    tools/ audit path needs the identical expansion against a different parked
+    set; here it keeps the report semantics of parking a single bot.
     """
     parked = list_parked()
     active = {entry["script"] for entry in FLEET if entry["script"] not in parked}
-    if RUNNER_SCRIPT in active:
-        active |= {script for script in HOSTED_SCRIPTS if script not in parked}
-    return active
+    return expand_hosted(active, parked)
 
 
 def is_bot_active(tag: str | None, active: set[str] | None = None) -> bool:

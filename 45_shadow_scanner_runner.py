@@ -91,8 +91,21 @@ def load_scanner(spec: ScannerSpec) -> ModuleType:
     if module_spec is None or module_spec.loader is None:
         raise ImportError(f"{spec.script} is not loadable from {path}")
     module = importlib.util.module_from_spec(module_spec)
+    # Registered BEFORE exec_module, like CPython's own import: a module that
+    # imports itself (or is reached again during its own execution) must find
+    # the partially-built object, not start a second execution. The flip side is
+    # that a failed exec would leave that half-initialised module behind under
+    # the bot's logger name, where a later import — or anything else reaching
+    # for the name — would silently get the broken object instead of an error,
+    # so the failing path removes it again.
     sys.modules[spec.logger_name] = module
-    module_spec.loader.exec_module(module)
+    try:
+        module_spec.loader.exec_module(module)
+    except BaseException:
+        # pop, not del: a module that blew up mid-import may already have
+        # removed its own entry, and that must not mask the original error.
+        sys.modules.pop(spec.logger_name, None)
+        raise
     return module
 
 

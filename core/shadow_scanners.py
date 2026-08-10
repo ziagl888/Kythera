@@ -91,6 +91,27 @@ SCANNERS: tuple[ScannerSpec, ...] = (
 HOSTED_SCRIPTS: tuple[str, ...] = tuple(spec.script for spec in SCANNERS)
 
 
+def expand_hosted(scripts: set[str], parked: set[str]) -> set[str]:
+    """``scripts`` plus the hosted scanners, when the runner is among them.
+
+    The ONE definition of "a hosted scanner is active exactly when the runner
+    runs and its OWN park marker is absent" — the same check the runner does
+    before each scan, seen from the report side. Two callers restate nothing:
+    ``core.bot_catalog.active_scripts()`` and the tools/ mirror
+    ``tools.fleet_realized_audit.resolve_active_scripts()`` (which exists only
+    because the audit needs a parked-dir override, so it can point at the LIVE
+    checkout from a worktree). Without the expansion every LIS/TSM/SKW/XSM/XSR
+    leg drops into the "inactive" bucket of those reports the moment the fleet
+    switches over — the four bots scan, but no longer own a fleet entry.
+
+    Pure set arithmetic, no filesystem: the caller decides where ``parked``
+    comes from. Returns a new set; the input is not mutated.
+    """
+    if RUNNER_SCRIPT not in scripts:
+        return set(scripts)
+    return set(scripts) | {script for script in HOSTED_SCRIPTS if script not in parked}
+
+
 def last_slot(spec: ScannerSpec, now: datetime) -> datetime:
     """The most recent scheduled slot at or before ``now`` (UTC, minute-truncated).
 
@@ -151,10 +172,14 @@ def slot_action(spec: ScannerSpec, now: datetime, last_fired: datetime | None) -
 def initial_slots(now: datetime) -> dict[str, datetime]:
     """Start state: every scanner's current slot counts as already handled.
 
-    A freshly started process only ever scans on the NEXT matching minute — the
-    old loops did the same (they slept until their minute came round again), and
-    it is the safe direction during the switchover: a runner starting inside a
-    due minute must not fire a scan that a not-yet-reaped predecessor process
-    may be running at that very moment.
+    A freshly started runner only ever scans on the NEXT matching minute. This
+    is a DELIBERATE divergence from the four old loops, not a copy of them: they
+    evaluated their minute predicate on the very first iteration, so a bot
+    started at 09:23:30 scanned immediately. Skipping that slot is the safe
+    direction during the switchover — a runner starting inside a due minute must
+    not fire a scan that a not-yet-reaped predecessor process may be running at
+    that very moment. What it costs is one slot after a restart, i.e. at worst
+    one hourly scan, or a weekly rebalance if the restart lands inside the
+    Monday 00:31/00:37 minute; that is cheaper than a double post.
     """
     return {spec.script: last_slot(spec, now) for spec in SCANNERS}

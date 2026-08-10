@@ -120,6 +120,38 @@ def test_scan_minute_matches_the_bot_constant(spec):
     assert f"SCAN_MINUTE = {spec.minute}" in source
 
 
+def _loop_predicate(source: str) -> str:
+    """The one ``if …:`` condition in a bot's main() loop that gates the scan.
+
+    Comment stripped, so a wording change in the trailing comment does not trip
+    the pin — only the condition itself does.
+    """
+    lines = [ln.strip() for ln in source.splitlines() if "SCAN_MINUTE" in ln and ln.strip().startswith("if ")]
+    assert len(lines) == 1, f"expected exactly one scan-gate line, found {lines}"
+    return lines[0].split("#")[0].strip().removeprefix("if ").rstrip(":").strip()
+
+
+def _expected_predicate(spec: ss.ScannerSpec) -> str:
+    if spec.cadence == ss.HOURLY:
+        return "now.minute == SCAN_MINUTE"
+    if spec.cadence == ss.EVERY_4H:
+        return "now.hour % 4 == 0 and now.minute == SCAN_MINUTE"
+    return f"now.weekday() == {spec.weekday} and now.hour == {spec.hour} and now.minute == SCAN_MINUTE"
+
+
+@pytest.mark.parametrize("spec", ss.SCANNERS, ids=lambda s: s.script)
+def test_cadence_matches_the_bots_own_loop_predicate(spec):
+    # SCAN_MINUTE alone is only a third of the schedule: bot 37 additionally
+    # gates on `hour % 4 == 0`, bots 38/39 on `weekday() == 0 and hour == 0`.
+    # The runner re-expresses those predicates as cadence/hour/weekday in
+    # ScannerSpec, so the whole condition is pinned against the bot source —
+    # comparing the FULL line, not a substring, because "now.minute ==
+    # SCAN_MINUTE" also sits inside the 4h and weekly conditions and would keep
+    # matching if a bot's schedule silently gained or lost a qualifier.
+    source = open(os.path.join(REPO_ROOT, spec.script), encoding="utf-8").read()
+    assert _loop_predicate(source) == _expected_predicate(spec)
+
+
 # ── 2. Schedule: the slot each cadence is currently in ───────────────────────
 
 
@@ -383,6 +415,22 @@ def test_a_failed_scan_is_not_retried_in_a_hot_loop():
     assert modules["36_ai_lis1_bot.py"].calls == 1
 
 
+def test_failed_import_leaves_nothing_behind_in_sys_modules(tmp_path, monkeypatch):
+    # load_scanner registers the module before exec_module (CPython's own order,
+    # so a self-import finds the partial object). If exec then raises, the
+    # half-initialised module must not survive under the bot's logger name —
+    # anything importing that name later would get the broken object instead of
+    # an error, and the failure would look like a working scanner.
+    broken = tmp_path / "zz_broken_bot.py"
+    broken.write_text("raise RuntimeError('boom during import')\n", encoding="utf-8")
+    spec = ss.ScannerSpec("zz_broken_bot.py", "ZZ_BROKEN_BOT_UNDER_TEST", ss.HOURLY, minute=5)
+    monkeypatch.setattr(runner, "_HERE", str(tmp_path))
+
+    with pytest.raises(RuntimeError):
+        runner.load_scanner(spec)
+    assert spec.logger_name not in sys.modules
+
+
 # ── 7. Report identity survives the consolidation ───────────────────────────
 
 
@@ -430,3 +478,62 @@ def test_parking_the_runner_marks_all_four_inactive():
 def test_runner_reports_the_families_of_the_bots_it_hosts():
     # Roster order (36, 37, 38, 39), each bot's own family order preserved.
     assert bc.families_for_script(ss.RUNNER_SCRIPT) == ["LIS", "TSM", "SKW", "XSM", "XSR"]
+
+
+def test_expand_hosted_is_a_no_op_without_the_runner():
+    # Pure set arithmetic, and inert when the runner is not active: parking the
+    # runner (or a fleet without it) must not conjure the four bots into a
+    # report's active set.
+    scripts = {"11_ai_mis_bot.py"}
+    assert ss.expand_hosted(scripts, set()) == scripts
+    assert scripts == {"11_ai_mis_bot.py"}  # input untouched
+
+
+# ── 8. The tools/ audit mirror resolves activity identically ────────────────
+#
+# tools/fleet_realized_audit.resolve_active_scripts() exists only because the
+# audit needs a parked-dir override (worktree looking at the LIVE checkout's
+# control/parked). It must NOT be a second, drifting definition of "active":
+# both sides go through shadow_scanners.expand_hosted, and this pins that they
+# agree — park-marker subtraction included. Before the expansion reached the
+# mirror, every TSM1/SKW1/XSM1/XSR1 leg was reported "inactive" while the runner
+# was scanning them.
+
+
+@pytest.mark.parametrize(
+    "parked",
+    [
+        set(),  # nothing parked → all four hosted bots count as active
+        {"37_ai_tsm1_bot.py"},  # one bot parked → only that one drops out
+        {ss.RUNNER_SCRIPT},  # runner parked → all four drop out
+        {ss.RUNNER_SCRIPT, "38_ai_skw1_bot.py"},  # both markers at once
+        {"11_ai_mis_bot.py"},  # unrelated bot parked → hosted set unaffected
+    ],
+    ids=["none", "one_hosted", "runner", "runner_and_hosted", "unrelated"],
+)
+def test_audit_mirror_matches_bot_catalog_on_the_hosted_expansion(tmp_path, parked):
+    from tools.fleet_realized_audit import resolve_active_scripts
+
+    for name in parked:
+        (tmp_path / name).touch()
+
+    with mock.patch.object(bc, "list_parked", return_value=set(parked)):
+        canonical = bc.active_scripts()
+
+    assert resolve_active_scripts(str(tmp_path)) == canonical
+
+
+def test_audit_mirror_keeps_the_hosted_bots_out_of_the_inactive_bucket(tmp_path):
+    # The MEDIUM this section was written for: the audit's lifecycle bucket asks
+    # "is the emitting script active?", and the emitting script of a TSM1 leg is
+    # bot 37 — which has no fleet entry anymore.
+    from tools.fleet_realized_audit import resolve_active_scripts
+
+    active = resolve_active_scripts(str(tmp_path))
+    for script in ss.HOSTED_SCRIPTS:
+        assert script in active
+
+    (tmp_path / "37_ai_tsm1_bot.py").touch()
+    parked_one = resolve_active_scripts(str(tmp_path))
+    assert "37_ai_tsm1_bot.py" not in parked_one
+    assert "38_ai_skw1_bot.py" in parked_one
