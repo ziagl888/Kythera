@@ -42,6 +42,14 @@ PERMANENT_BAD_REQUEST_REASONS = (
     "message text is empty",
     "chat not found",
 )
+
+#: The subset of the above that condemns the whole CHANNEL, not just the message.
+#: If the chat does not exist, every other message queued for it will fail the same
+#: way, so the channel is skipped for the rest of the poll cycle (P1.3) — which is
+#: exactly what the pre-existing, unreachable ``TelegramError`` handler below did.
+#: "Message is too long" is deliberately NOT here: that is a property of the one
+#: message, and blocking its channel would punish the queue behind it.
+CHANNEL_LEVEL_BAD_REQUEST_REASONS = ("chat not found",)
 FETCH_BATCH_SIZE = 50  # Max messages per DB roundtrip
 IDLE_SLEEP_SEC = 5  # Loop delay when outbox is empty
 
@@ -290,6 +298,12 @@ def is_permanent_bad_request(reason: str) -> bool:
     """True if a BadRequest text is on the permanent allowlist — pure, no IO."""
     lowered = (reason or "").lower()
     return any(marker in lowered for marker in PERMANENT_BAD_REQUEST_REASONS)
+
+
+def is_channel_level_bad_request(reason: str) -> bool:
+    """True if the rejection condemns the channel, not just this message."""
+    lowered = (reason or "").lower()
+    return any(marker in lowered for marker in CHANNEL_LEVEL_BAD_REQUEST_REASONS)
 
 
 def mark_failed_permanently(cur, msg_id: int, error: str, image_path: str | None) -> None:
@@ -586,12 +600,16 @@ async def process_outbox():
                                 conn.commit()
                                 # The request DID reach Telegram and was refused,
                                 # so the rate-limit budget is honestly spent —
-                                # once, not three times. The channel is NOT
-                                # blocked: nothing about this message says the
-                                # next one will fail.
+                                # once, not three times.
                                 now_after = time.time() * 1000
                                 last_send_per_channel[channel_id] = now_after
                                 last_global_send_ms = now_after
+                                # Blocking the channel is a per-reason decision.
+                                # A too-long message says nothing about the next
+                                # one, so its channel keeps its turn; a missing
+                                # chat condemns every message queued behind it.
+                                if is_channel_level_bad_request(str(e)):
+                                    failed_channels.add(channel_id)  # P1.3
                                 logger.error(
                                     f"❌ Msg {msg_id} to channel {channel_id} permanently "
                                     f"rejected ({e}) — failed without retry."

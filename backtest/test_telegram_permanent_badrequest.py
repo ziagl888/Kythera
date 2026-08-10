@@ -84,6 +84,29 @@ def test_allowlist_is_lowercase_or_matching_breaks():
 
 # ---------- the classification the whole fix hinges on ----------
 
+# ---------- channel-level vs message-level ----------
+
+def test_chat_not_found_condemns_the_channel():
+    """Every message queued behind it will fail the same way, so the channel is
+    skipped for the rest of the cycle — what the unreachable TelegramError
+    handler already did."""
+    assert tg.is_channel_level_bad_request("Chat not found")
+
+
+def test_too_long_does_not_condemn_the_channel():
+    """A property of THIS message. Blocking the channel would punish the queue
+    behind a single oversized post."""
+    assert tg.is_permanent_bad_request("Message is too long")
+    assert not tg.is_channel_level_bad_request("Message is too long")
+
+
+def test_channel_level_set_is_a_subset_of_permanent():
+    """A reason that blocks the channel but is not permanent would strand the
+    message in retries while its channel is skipped."""
+    for reason in tg.CHANNEL_LEVEL_BAD_REQUEST_REASONS:
+        assert tg.is_permanent_bad_request(reason), reason
+
+
 def test_bad_request_really_is_a_networkerror_subclass():
     """If this ever stops holding, the `isinstance` check in the NetworkError
     clause becomes dead code and permanent 400s silently go back to being
