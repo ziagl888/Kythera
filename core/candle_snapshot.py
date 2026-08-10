@@ -34,8 +34,11 @@
 # same dtypes — see backtest/test_candle_snapshot_protocol.py.
 #
 # The wire format is line-based JSON (chart_data_service.py precedent). JSON
-# carries floats round-trip-exactly (repr), and `NaN` survives because both ends
-# are Python's json module. The one type JSON cannot carry is `datetime`, so
+# carries floats round-trip-exactly (repr). A NaN travels as `null`, because in
+# a frame `_fetch_df` built a NaN can only be pandas' rendering of a SQL NULL —
+# sending the NULL is what makes the decoded dtype follow the slice exactly as
+# the DB path's would (see _encode_value). The one type JSON cannot carry at all
+# is `datetime`, so
 # datetime columns are tagged and encoded as ISO-8601; anything that is neither
 # JSON-native nor a datetime (a `Decimal`, say) is REFUSED rather than coerced —
 # the service then answers "not covered" and the caller silently takes the DB
@@ -63,8 +66,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import socket
+import threading
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -91,6 +96,12 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5556  # 5555 is chart_data_service
 DEFAULT_TIMEOUT_SEC = 2.0
 
+#: Longest response line the client will accept. The widest legitimate answer is
+#: bot 12's joined read (500 rows x ~121 columns, ~1-2 MB), so this is ~25x
+#: headroom — and it bounds a wedged or hostile peer that would otherwise grow
+#: the receive buffer until the BOT process runs out of memory.
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+
 #: Reads served from RAM. `joined` is read_candles_with_indicators.
 KIND_CANDLES = "candles"
 KIND_INDICATORS = "indicators"
@@ -116,11 +127,13 @@ REASON_UNKNOWN_COLUMN = "unknown_column"
 REASON_INDICATOR_GAP = "indicator_gap"  # joined read would need a LEFT-JOIN NULL fill
 REASON_ENCODE = "unencodable_value"
 REASON_BAD_REQUEST = "bad_request"
+REASON_CONFIG = "config"  # an env var this module reads is unusable
 
-#: Reasons that indicate a real problem (unreachable service, stale frames) and
-#: are therefore logged at WARNING; the rest are ordinary "not my request" cases
-#: and stay at DEBUG so a cold service does not drown the bot logs.
-_WARN_REASONS = frozenset({REASON_STALE, REASON_ENCODE, "transport", "protocol"})
+#: Reasons that indicate a real problem (unreachable service, stale frames,
+#: a typo in the endpoint env) and are therefore logged at WARNING; the rest are
+#: ordinary "not my request" cases and stay at DEBUG so a cold service does not
+#: drown the bot logs.
+_WARN_REASONS = frozenset({REASON_STALE, REASON_ENCODE, REASON_CONFIG, "transport", "protocol"})
 
 #: A scan touches ~523 coins, so one WARN per coin per scan would be 523 lines
 #: for a single root cause. One line per reason per minute is enough to notice.
@@ -133,8 +146,21 @@ class SnapshotEncodeError(RuntimeError):
 
 
 def endpoint() -> tuple[str, int]:
-    """(host, port) of the snapshot service — localhost by default."""
-    return os.getenv(HOST_ENV, DEFAULT_HOST), int(os.getenv(PORT_ENV, str(DEFAULT_PORT)))
+    """(host, port) of the snapshot service — localhost by default.
+
+    An unparsable port falls back to the default instead of raising: this runs
+    inside every bot read, and a typo in `.env` must degrade to the DB path
+    (via a connection that finds nothing listening), never take a scan down.
+    """
+    host = os.getenv(HOST_ENV, DEFAULT_HOST)
+    raw = os.getenv(PORT_ENV, "").strip()
+    if not raw:
+        return host, DEFAULT_PORT
+    try:
+        return host, int(raw)
+    except ValueError:
+        _note(REASON_CONFIG, f"{PORT_ENV}={raw!r} is not a port number — using {DEFAULT_PORT}")
+        return host, DEFAULT_PORT
 
 
 def client_timeout() -> float:
@@ -209,6 +235,16 @@ def _encode_value(value: Any, coltype: str) -> Any:
     if isinstance(value, np.generic):  # np.float64 & friends -> their Python twin
         value = value.item()
     if value is None or value is pd.NaT:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        # A NaN in a stored frame is pandas' RENDERING of a SQL NULL, not a
+        # value the DB holds: psycopg2 hands `_fetch_df` None, and pandas turns
+        # it into NaN only because the rest of the column is float. So the wire
+        # carries the NULL, not the rendering — and the decode then reproduces
+        # exactly the coercion the DB path would apply to THIS slice. Shipping
+        # the NaN instead pins an all-NULL slice (a sparse indicator read with
+        # limit=1) to float64/NaN where the SQL path yields object/None, and
+        # every downstream `is None` check flips.
         return None
     if coltype == _TYPE_DATETIME:
         if not isinstance(value, datetime):
@@ -343,17 +379,26 @@ class SnapshotStore:
 
     Only ``candles`` and ``indicators`` frames are stored; a joined request is
     composed from the two. Assignment and lookup are single dict operations, so
-    a reader always sees a whole frame — never a half-written one.
+    a reader always sees a whole frame — never a half-written one, and never a
+    mutated one: a refresh REPLACES the entry, and every read path builds new
+    objects (slice, projection, concat) rather than writing into the stored
+    frame. Iteration is the one thing that is not atomic — a sweep inserting
+    while ``stats``/``memory_bytes`` walked the dict would raise "dictionary
+    changed size during iteration" — so those two take a snapshot under the lock
+    and walk that. ``get`` stays lock-free; it is the hot path.
     """
 
     def __init__(self) -> None:
         self._frames: dict[tuple[str, str, str], pd.DataFrame] = {}
         self._fetched_at: dict[tuple[str, str, str], float] = {}
+        self._lock = threading.Lock()
 
     def put(self, symbol: str, tf: str, kind: str, df: pd.DataFrame, *, fetched_at: float | None = None) -> None:
         key = (symbol, tf, kind)
-        self._frames[key] = df
-        self._fetched_at[key] = time.time() if fetched_at is None else fetched_at
+        stamp = time.time() if fetched_at is None else fetched_at
+        with self._lock:
+            self._frames[key] = df
+            self._fetched_at[key] = stamp
 
     def get(self, symbol: str, tf: str, kind: str) -> pd.DataFrame | None:
         return self._frames.get((symbol, tf, kind))
@@ -362,7 +407,8 @@ class SnapshotStore:
         return self._fetched_at.get((symbol, tf, kind))
 
     def keys(self) -> list[tuple[str, str, str]]:
-        return list(self._frames)
+        with self._lock:
+            return list(self._frames)
 
     def max_open_time(self, symbol: str, tf: str, kind: str) -> Any | None:
         df = self.get(symbol, tf, kind)
@@ -370,18 +416,24 @@ class SnapshotStore:
             return None
         return df["open_time"].iloc[-1]
 
+    def _entries(self) -> list[tuple[tuple[str, str, str], pd.DataFrame]]:
+        """A stable view of the store to walk outside the lock."""
+        with self._lock:
+            return list(self._frames.items())
+
     def memory_bytes(self) -> int:
-        return int(sum(int(df.memory_usage(deep=True).sum()) for df in self._frames.values()))
+        return int(sum(int(df.memory_usage(deep=True).sum()) for _, df in self._entries()))
 
     def stats(self) -> dict[str, Any]:
+        entries = self._entries()  # one snapshot for all four figures — they agree
         by_kind: dict[str, int] = {}
-        for _, _, kind in self._frames:
+        for (_, _, kind), _df in entries:
             by_kind[kind] = by_kind.get(kind, 0) + 1
         return {
-            "entries": len(self._frames),
+            "entries": len(entries),
             "entries_by_kind": by_kind,
-            "rows": int(sum(len(df) for df in self._frames.values())),
-            "memory_bytes": self.memory_bytes(),
+            "rows": int(sum(len(df) for _, df in entries)),
+            "memory_bytes": int(sum(int(df.memory_usage(deep=True).sum()) for _, df in entries)),
         }
 
 
@@ -544,6 +596,9 @@ def request(payload: dict[str, Any]) -> dict[str, Any] | None:
                 if not chunk:
                     break
                 buf += chunk
+                if len(buf) > MAX_RESPONSE_BYTES:
+                    _note("protocol", f"response exceeded {MAX_RESPONSE_BYTES} bytes without a newline")
+                    return None
     except (TimeoutError, OSError) as exc:
         _note("transport", f"{host}:{port} — {type(exc).__name__}: {exc}")
         return None
@@ -611,7 +666,14 @@ def _fetch(
     if frame_open_time is None:
         _note(REASON_STALE, f"{symbol} {tf} {kind} — service reported no frame watermark")
         return None
-    if not frame_is_fresh(datetime.fromisoformat(frame_open_time), tf, end=end, now=datetime.now(timezone.utc)):
+    try:
+        watermark = datetime.fromisoformat(frame_open_time)
+    except (TypeError, ValueError) as exc:
+        # A watermark this end cannot read is a peer problem, not a bot problem:
+        # fall back like any other refusal instead of raising inside the read.
+        _note("protocol", f"{symbol} {tf} {kind} — unreadable frame watermark {frame_open_time!r}: {exc}")
+        return None
+    if not frame_is_fresh(watermark, tf, end=end, now=datetime.now(timezone.utc)):
         _note(REASON_STALE, f"{symbol} {tf} {kind} — frame watermark {frame_open_time} is behind the last close")
         return None
 

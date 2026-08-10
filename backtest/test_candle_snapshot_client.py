@@ -264,6 +264,23 @@ def test_the_client_refuses_a_stale_frame_the_service_called_fresh(service, monk
         c.read_candles(None, "BTCUSDT", "1h", limit=1)
 
 
+def test_a_malformed_watermark_takes_the_db_path(service, monkeypatch):
+    """A peer value this end cannot parse must be a fallback like any other
+    refusal — unguarded, `datetime.fromisoformat` would raise INSIDE the bot's
+    read and take the scan down instead of losing one cache hit."""
+    real_request = cs.request
+
+    def _garbled_request(payload):
+        response = real_request(payload)
+        if response and response.get("ok"):
+            response["frame_open_time"] = "not-a-timestamp"
+        return response
+
+    monkeypatch.setattr(cs, "request", _garbled_request)
+    with pytest.raises(AttributeError):  # None.cursor() — the DB path ran
+        c.read_candles(None, "BTCUSDT", "1h", limit=1)
+
+
 def test_an_unreachable_service_takes_the_db_path(monkeypatch):
     """A dead or not-yet-started service is a fallback, never an error."""
     monkeypatch.setenv(cs.GATE_ENV, "1")
@@ -317,6 +334,49 @@ def test_health_reports_the_store(service):
 def test_an_unknown_command_is_refused(service):
     assert svc.handle_line('{"cmd": "nope"}')["ok"] is False
     assert svc.handle_line("not json at all")["ok"] is False
+
+
+# ── Transport hygiene ─────────────────────────────────────────────────────────
+
+
+def test_a_typo_in_the_port_env_falls_back_to_the_default(monkeypatch):
+    """`int("55Y6")` inside a bot read would abort the scan; a typo in `.env`
+    must cost the snapshot path, not the bot."""
+    monkeypatch.setenv(cs.HOST_ENV, "127.0.0.1")
+    monkeypatch.setenv(cs.PORT_ENV, "55Y6")
+    assert cs.endpoint() == ("127.0.0.1", cs.DEFAULT_PORT)
+    monkeypatch.setenv(cs.PORT_ENV, "")
+    assert cs.endpoint() == ("127.0.0.1", cs.DEFAULT_PORT)
+    monkeypatch.setenv(cs.PORT_ENV, "5599")
+    assert cs.endpoint() == ("127.0.0.1", 5599)
+
+
+def test_an_endless_response_is_bounded(monkeypatch):
+    """A wedged or hostile peer that never sends a newline would otherwise grow
+    the receive buffer until the BOT runs out of memory."""
+
+    class _Flood(socketserver.BaseRequestHandler):
+        def handle(self) -> None:
+            self.request.recv(4096)
+            block = b"x" * (1 << 16)
+            try:
+                while True:  # never a newline
+                    self.request.sendall(block)
+            except OSError:
+                pass  # the client hung up — which is the point
+
+    server = _Server(("127.0.0.1", 0), _Flood)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(cs, "MAX_RESPONSE_BYTES", 1 << 20)
+    monkeypatch.setenv(cs.HOST_ENV, "127.0.0.1")
+    monkeypatch.setenv(cs.PORT_ENV, str(server.server_address[1]))
+    try:
+        assert cs.request({"cmd": "health"}) is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 if __name__ == "__main__":

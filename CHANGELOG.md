@@ -6,6 +6,9 @@ duplicates across bots, and `candles JOIN indicators` is the #1 statement in `pg
 (3.0M calls @ 36.5 ms). One process now reads each (symbol, tf) once per candle period and serves
 the bots' slices from RAM. **Gated off — `KYTHERA_CANDLE_SNAPSHOT` defaults to 0, so this diff
 changes nothing about live behaviour.** Turning it on is an operator decision (.env + fleet restart).
+With the gate off the process is *dormant*, not merely unused: no sweep, no store, no DB
+connection, no listening socket — just a sleep loop with a heartbeat line every 15 minutes.
+Sweeping for nobody would have cost ~1046 DB reads/h and ~320 MB for zero consumers.
 
 * **`candle_snapshot_service.py` (new, fleet entry `start_delay=307`, group `core`):** in-memory
   frames + localhost TCP, line-based JSON — the `chart_data_service.py` pattern. The refresh loop
@@ -24,7 +27,12 @@ changes nothing about live behaviour.** Turning it on is an operator decision (.
   rebuilds with the same call, so values *and* dtypes match. Slicing reproduces `_windowed_select`
   (window → DESC → LIMIT → ASC), including the `LIMIT 0` case that `iloc[-0:]` would have turned
   into "the whole frame". A value JSON cannot carry losslessly (a `Decimal`) is refused, never
-  coerced.
+  coerced. A NaN travels as `null`: in a frame `_fetch_df` built, a NaN can only be pandas'
+  rendering of a SQL NULL (psycopg2 yields `None`), and whether a column lands as `float64`/NaN or
+  `object`/None is decided per frame — so the wire carries the NULL and lets the decode reproduce
+  the coercion of the slice the bot actually asked for. Otherwise an all-NULL single-row slice (a
+  sparse indicator read with `limit=1`) would arrive as `float64`/NaN where the SQL path yields
+  `object`/None, and every downstream `is None` check would flip.
 * **Five doors it will not walk through**, each a transparent fallback to the DB path with a
   throttled log line: `include_forming=True` (the store holds closed candles only — contract 2),
   an uncovered (symbol, tf, kind), a window the frame cannot prove it spans, a joined read whose
@@ -39,11 +47,23 @@ changes nothing about live behaviour.** Turning it on is an operator decision (.
   permanent fallbacks *silently*. A read with neither `limit` nor `start` is never served. The
   store costs ~250 MB of indicators + ~70 MB of candles at the defaults; the measured figure is
   logged after every sweep — check it against free RAM before flipping the gate.
-* **Tests (DB-free):** `backtest/test_candle_snapshot_protocol.py` (wire round trip incl. NaN,
-  microseconds, NULL/text columns; slicing against a SQL oracle; coverage; staleness; the joined
-  composition), `backtest/test_candle_snapshot_client.py` (a real service socket on an ephemeral
-  port, driven through `core/candles.py`; gate-off no-op; every fallback door), and
-  `backtest/test_candle_snapshot_service.py` (due-list, backoff, sweep fan-out).
+* **Answering never sits on the event loop.** Slicing and JSON-encoding a 500 × 121 joined response
+  is ~500 ms of CPU; run on the loop it would serialise the fleet, and the second caller of a pair
+  would wait out the first one's encode and then trip the client's 2 s timeout — a fallback to
+  exactly the DB load this service exists to remove. The handler runs in a worker thread, which is
+  safe because it only reads: a refresh *replaces* a store entry rather than writing into a frame,
+  and `stats`/`memory_bytes` walk a snapshot taken under the store lock.
+* **A refusal never becomes an exception in the bot.** An unparsable `CANDLE_SNAPSHOT_PORT` falls
+  back to the default port, an unreadable frame watermark from the peer falls back to the DB path,
+  and a response line that never terminates is cut off at 32 MB instead of growing the *bot's*
+  receive buffer without bound.
+* **Tests (DB-free):** `backtest/test_candle_snapshot_protocol.py` (wire round trip, microseconds,
+  NULL/text columns, NULL fidelity against the SQL oracle for an all-NULL and a mixed slice;
+  slicing against a SQL oracle; coverage; staleness; the joined composition),
+  `backtest/test_candle_snapshot_client.py` (a real service socket on an ephemeral port, driven
+  through `core/candles.py`; gate-off no-op; every fallback door; transport guards), and
+  `backtest/test_candle_snapshot_service.py` (due-list, backoff, sweep fan-out, gate-off dormancy,
+  two concurrent requests that overlap rather than serialise, a store read racing a sweep).
   `backtest/test_candles.py` 60/60, `backtest/test_fleet_definition.py` 8/8, regression guard
   24/24 without refresh.
 

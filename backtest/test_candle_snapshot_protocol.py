@@ -111,13 +111,78 @@ def test_round_trip_preserves_text_and_null_columns():
     assert rebuilt["regime_label"].isna().any()  # the NULL rows really are in the fixture
 
 
-def test_round_trip_preserves_nan_and_microseconds():
+def test_round_trip_preserves_microseconds():
     ot = _ANCHOR.replace(microsecond=123456)
-    direct = _frame([("BTCUSDT", ot, float("nan"))], ["symbol", "open_time", "close"])
+    direct = _frame([("BTCUSDT", ot, 1.0)], ["symbol", "open_time", "close"])
     rebuilt = cs.decode_frame(cs.encode_frame(direct))
     assert rebuilt["open_time"].iloc[0] == pd.Timestamp(ot)
-    assert pd.isna(rebuilt["close"].iloc[0])
     pd.testing.assert_frame_equal(direct, rebuilt, check_dtype=True, check_exact=True)
+
+
+# ── NULL fidelity: the DB path's pandas coercion, reproduced per slice ────────
+#
+# psycopg2 hands `_fetch_df` None for a SQL NULL, never NaN. Whether the frame
+# then carries None or NaN is decided by pandas PER FRAME: a column that mixes
+# NULLs with floats becomes float64/NaN, a column that is all NULL stays
+# object/None. The store holds the wide-lookback frame, so it can carry NaN
+# where a narrow slice of the SAME data — the read the bot actually issues —
+# would have come back object/None. Sending the NULL rather than its rendering
+# is what keeps the two identical.
+
+
+def test_a_nan_travels_as_the_null_it_stands_for():
+    payload = cs.encode_frame(_frame([("BTCUSDT", _ANCHOR, float("nan"))], ["symbol", "open_time", "close"]))
+    assert payload["rows"][0][2] is None
+
+
+def test_an_all_null_slice_decodes_like_the_db_path():
+    """The sparse-indicator as-of read: `limit=1` onto a row whose indicator is
+    NULL. Serving the store's NaN would hand the bot float64/NaN where the SQL
+    path yields object/None — and every downstream `is None` check flips."""
+    cols = ["symbol", "open_time", "rsi_14"]
+    rows = [("BTCUSDT", _ANCHOR - timedelta(hours=1), 55.5), ("BTCUSDT", _ANCHOR, None)]
+    stored = _frame(rows, cols)  # the wide read the sweep performed
+    assert stored["rsi_14"].dtype == "float64"  # pandas rendered the NULL as NaN
+
+    sliced, reason = cs.select_slice(stored, limit=1, start=None, end=None)
+    assert reason == ""
+    served = cs.decode_frame(cs.encode_frame(sliced))
+
+    oracle = _sql_oracle(rows, cols, limit=1)  # what `... LIMIT 1` would have built
+    assert oracle["rsi_14"].dtype == object and oracle["rsi_14"].iloc[0] is None
+    pd.testing.assert_frame_equal(served, oracle, check_dtype=True, check_exact=True)
+    assert served["rsi_14"].iloc[0] is None
+
+
+def test_a_mixed_null_slice_decodes_like_the_db_path():
+    """The other half of the same coercion: with a real float in the slice the DB
+    path yields float64/NaN — so the snapshot must too, not object/None."""
+    cols = ["symbol", "open_time", "rsi_14"]
+    rows = [
+        ("BTCUSDT", _ANCHOR - timedelta(hours=2), 55.5),
+        ("BTCUSDT", _ANCHOR - timedelta(hours=1), None),
+        ("BTCUSDT", _ANCHOR, 56.5),
+    ]
+    stored = _frame(rows, cols)
+
+    sliced, reason = cs.select_slice(stored, limit=3, start=None, end=None)
+    assert reason == ""
+    served = cs.decode_frame(cs.encode_frame(sliced))
+
+    oracle = _sql_oracle(rows, cols, limit=3)
+    assert oracle["rsi_14"].dtype == "float64" and pd.isna(oracle["rsi_14"].iloc[1])
+    pd.testing.assert_frame_equal(served, oracle, check_dtype=True, check_exact=True)
+
+
+def test_an_all_null_text_slice_decodes_like_the_db_path():
+    """`regime_label` is the object-column version of the same question — it was
+    already object/None in the store, and it stays that way."""
+    cols = ["symbol", "open_time", "regime_label"]
+    rows = [("BTCUSDT", _ANCHOR - timedelta(hours=1), "TREND"), ("BTCUSDT", _ANCHOR, None)]
+    sliced, reason = cs.select_slice(_frame(rows, cols), limit=1, start=None, end=None)
+    assert reason == ""
+    served = cs.decode_frame(cs.encode_frame(sliced))
+    pd.testing.assert_frame_equal(served, _sql_oracle(rows, cols, limit=1), check_dtype=True, check_exact=True)
 
 
 def test_empty_frame_round_trips_with_its_columns():

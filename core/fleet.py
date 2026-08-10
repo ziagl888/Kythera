@@ -413,7 +413,8 @@ FLEET: list[dict[str, Any]] = [
     # and serves the nine hourly scanners' overlapping windows from RAM
     # (core/candle_snapshot.py hooks into core/candles.py — no bot is touched).
     # Consumers only appear when KYTHERA_CANDLE_SNAPSHOT is turned on; with the
-    # gate off (the default) the process runs idle and nothing queries it, so
+    # gate off (the default) the process parks in its dormant loop — no DB
+    # sweep, no store, no listening socket, one heartbeat line every 15 min — so
     # listing it here is safe ahead of the rollout decision. group="core": it is
     # infrastructure like chart_data_service, not a strategy. Last in the list
     # with the highest delay (monotonicity regression

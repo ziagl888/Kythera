@@ -16,10 +16,14 @@ and no bot script and no ``core/*_features.py`` builder is touched.
 
 Gate
 ----
-``KYTHERA_CANDLE_SNAPSHOT`` is **off by default**. With the gate off nothing
-asks this service anything — running it is then pure (idle) overhead, and every
-read behaves exactly as it did before. Turning it on is an operator decision
-(.env + fleet restart).
+``KYTHERA_CANDLE_SNAPSHOT`` is **off by default**. With the gate off nothing can
+ask this service anything, so the process makes itself DORMANT: no sweep, no
+store, no DB connection, no listening socket — just a sleep loop with a
+heartbeat line every 15 minutes (:func:`dormant_loop`). Sweeping for nobody
+would cost ~1046 DB reads/h and ~320 MB of RAM, which is exactly the kind of
+cost a default-off gate is supposed to prevent. Every read then behaves exactly
+as it did before. Turning the gate on is an operator decision (.env + fleet
+restart).
 
 Architecture (modelled on chart_data_service.py)
 ------------------------------------------------
@@ -82,6 +86,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.candle_snapshot import (
+    GATE_ENV,
     KIND_CANDLES,
     KIND_INDICATORS,
     SnapshotStore,
@@ -121,6 +126,11 @@ STALE_BACKOFF_SEC = int(os.getenv("KYTHERA_SNAPSHOT_STALE_BACKOFF_SEC", "300"))
 #: coins.json is rewritten daily by 6_housekeeping; pick new listings up
 #: additively, exactly like chart_data_service does.
 COIN_REFRESH_INTERVAL_SEC = int(os.getenv("KYTHERA_SNAPSHOT_COIN_REFRESH_SEC", "300"))
+
+#: Dormant mode (gate off). How often the gate is re-read, and how often the
+#: process says so in the log. Both cheap: the poll is one os.getenv.
+DORMANT_POLL_SEC = float(os.getenv("KYTHERA_SNAPSHOT_DORMANT_POLL_SEC", "60"))
+DORMANT_LOG_INTERVAL_SEC = float(os.getenv("KYTHERA_SNAPSHOT_DORMANT_LOG_SEC", "900"))
 
 _START_TIME = time.time()
 
@@ -267,6 +277,12 @@ def sweep() -> dict[str, Any]:
 async def refresh_loop() -> None:
     while True:
         try:
+            if not snapshot_enabled():
+                # No consumers ⇒ no DB work. main() parks the process in
+                # dormant_loop before this loop ever starts, so reaching here
+                # means the gate went off after the start — the second door.
+                await asyncio.sleep(REFRESH_POLL_SEC)
+                continue
             _LAST_SWEEP["started_at"] = datetime.now(timezone.utc).isoformat()
             _LAST_SWEEP.update(await asyncio.to_thread(sweep))
         except Exception as exc:  # noqa: BLE001 — the loop outlives any single sweep
@@ -332,15 +348,35 @@ def handle_line(line: str) -> dict[str, Any]:
     return {"ok": False, "reason": "bad_request", "detail": f"unknown cmd: {cmd}"}
 
 
+def render_response(line: str) -> bytes:
+    """Answer one request line and serialise it — the whole CPU cost in one
+    call, so a single thread hop takes all of it off the event loop."""
+    return (json.dumps(handle_line(line), separators=(",", ":")) + "\n").encode("utf-8")
+
+
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    """One request per connection (chart_data_service pattern)."""
+    """One request per connection (chart_data_service pattern).
+
+    ``handle_line`` is CPU work — slicing and JSON-encoding a 500 x 121 joined
+    response is ~500 ms — so it runs in a worker thread, not on the event loop.
+    On the loop it would serialise the whole fleet: nine scanners burst through
+    ~523 coins each, and the second caller of a pair would sit out the first
+    one's encode and then trip the client's 2 s timeout (a fallback to the DB
+    path, i.e. exactly the load this service exists to remove).
+
+    Off-loading is safe because the handler only READS: ``serve_request`` looks
+    the frame up with one atomic dict get and then builds new objects (mask,
+    ``iloc`` slice, projection, ``concat``). A concurrent refresh REPLACES the
+    dict entry rather than writing into the frame, so a reader mid-request keeps
+    the whole, consistent frame it started with. ``stats``/``memory_bytes`` walk
+    a snapshot taken under the store lock.
+    """
     addr = writer.get_extra_info("peername")
     try:
         raw = await asyncio.wait_for(reader.readline(), timeout=5.0)
         if not raw:
             return
-        response = handle_line(raw.decode("utf-8").strip())
-        writer.write((json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8"))
+        writer.write(await asyncio.to_thread(render_response, raw.decode("utf-8").strip()))
         await writer.drain()
     except asyncio.TimeoutError:
         logger.debug("client %s timed out", addr)
@@ -357,12 +393,46 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 # ─── Orchestration ────────────────────────────────────────────────────────────
 
 
+async def dormant_loop() -> None:
+    """Idle until the gate turns on. Returns as soon as it is on.
+
+    "Dormant" is literal: no DB connection, no store, no listening socket, no
+    coins.json read. With ``KYTHERA_CANDLE_SNAPSHOT`` off nothing can query this
+    service, so a sweeping process would burn ~1046 DB reads/h and hold ~320 MB
+    for zero consumers — the cost the default-off gate exists to avoid.
+
+    The gate is re-read every poll (``snapshot_enabled`` reads the env at call
+    time). The ordinary flip is .env + fleet restart; re-reading just means a
+    process that is already running picks it up instead of needing a second one.
+    """
+    last_log: float | None = None
+    while not snapshot_enabled():
+        now = time.monotonic()
+        if last_log is None or now - last_log >= DORMANT_LOG_INTERVAL_SEC:
+            logger.info(
+                "dormant: %s is off — no sweeps, no store, no listener. Flip the gate to activate.",
+                GATE_ENV,
+            )
+            last_log = now
+        await asyncio.sleep(DORMANT_POLL_SEC)
+
+
 async def main() -> None:
     unknown = [tf for tf in TIMEFRAMES if tf not in TF_SECONDS]
     if unknown:
         logger.error("unknown timeframes in KYTHERA_SNAPSHOT_TIMEFRAMES: %s — service cannot start.", unknown)
         return
 
+    if not snapshot_enabled():
+        logger.info("=== CANDLE SNAPSHOT SERVICE DORMANT (%s is off — nothing can query it) ===", GATE_ENV)
+        await dormant_loop()
+        logger.info("%s turned on — activating the snapshot service.", GATE_ENV)
+
+    await run_service()
+
+
+async def run_service() -> None:
+    """The active service: warm store, refresh loops, TCP listener."""
     coins = load_coins()
     if not coins:
         logger.error("no coins loaded — service cannot start.")
@@ -371,12 +441,11 @@ async def main() -> None:
 
     host, port = endpoint()
     logger.info(
-        "=== CANDLE SNAPSHOT SERVICE START (%d coins, tf=%s, lookback %d/%d, gate=%s) ===",
+        "=== CANDLE SNAPSHOT SERVICE START (%d coins, tf=%s, lookback %d/%d, gate ON) ===",
         len(coins),
         ",".join(TIMEFRAMES),
         CANDLE_LOOKBACK,
         INDICATOR_LOOKBACK,
-        "ON" if snapshot_enabled() else "OFF (nothing will query this service)",
     )
 
     server = await asyncio.start_server(handle_client, host, port)
