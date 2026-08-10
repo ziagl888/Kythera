@@ -408,6 +408,33 @@ def _assert_legacy_not_stale(conn: Any) -> None:
     _legacy_freshness_ok = True
 
 
+#: Lower bound `latest_open_time` tries FIRST on the hypertable path.
+#:
+#: A `MAX(open_time)` without a time predicate cannot exclude chunks, so the
+#: planner has to plan all ~129 of them. The index was never the problem —
+#: idx_indicators_sym_tf_ot is used with Heap Fetches 0 either way.
+#:
+#: Two measurements, and the SECOND is the one to trust
+#: (T-2026-KYT-9050-131, live DB):
+#:
+#:   EXPLAIN ANALYZE   no bound: planning 802 ms (warm: 500-700), execution 5 ms
+#:                     30 days:  planning  21 ms,                 execution 1 ms
+#:   end-to-end        no bound: 134.8 ms per latest_open_time() call
+#:   (32 calls)        30 days:  107.1 ms                          -> ~21 % faster
+#:
+#: EXPLAIN's planning-time figure massively overstates what the caller actually
+#: pays; do not extrapolate fleet-wide load from it. The real, defensible number
+#: is the 21 % — worth having on a path the indicator engine walks per symbol and
+#: timeframe, but NOT the order-of-magnitude win the EXPLAIN suggests. Both
+#: measurements ran while the box was at 83-100 % CPU, which likely compresses
+#: the gap.
+#: Generous on purpose: it has to clear the longest timeframe (1w) by several
+#: candles, and chunks are ~7 days wide, so 30 days still leaves the planner
+#: four or five of them. A miss is not an error — it only costs the unbounded
+#: fallback below, which is what keeps the answer identical to before.
+_LATEST_LOOKBACK = timedelta(days=30)
+
+
 def _hyper_scope(symbol: str, tf: str, alias: str | None = None) -> tuple[sql.Composable, list[Any]]:
     """`symbol = %s AND tf = %s` — the predicate that scopes a hypertable read to
     one (symbol, tf), the hyper equivalent of picking a per-coin table by name.
@@ -836,8 +863,21 @@ def latest_open_time(
         query = sql.SQL("SELECT MAX(open_time) FROM {tbl} WHERE ").format(tbl=_ident(table)) + pred
         query += _forming_filter(tf, include_forming)
         with conn.cursor() as cur:
-            cur.execute(query, params)
+            # Bounded first so TimescaleDB can exclude chunks — see
+            # _LATEST_LOOKBACK for the measurement. The bound is a pure
+            # PERFORMANCE hint, never a semantic one: if the window holds no row
+            # we ask again without it, so the returned watermark is the same
+            # value the unbounded query always gave.
+            cur.execute(
+                query + sql.SQL(" AND open_time > %s"),
+                params + [datetime.now(timezone.utc) - _LATEST_LOOKBACK],
+            )
             row = cur.fetchone()
+            if not row or row[0] is None:
+                # Cold, retired or simply stale (symbol, tf) — pay the unbounded
+                # plan once for the rare case instead of on every call.
+                cur.execute(query, params)
+                row = cur.fetchone()
     else:
         table = _table_for_kind(symbol, tf, kind)
         if not table_exists(conn, table):
