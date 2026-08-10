@@ -203,7 +203,7 @@ def test_roster_admits_only_selected_legs():
     contribution is the legs that never earned a seat. What its seat did require is
     the symbol-scoped re-entry lock — a re-forwarded row carries a new
     src_signal_id, which the src-keyed lock cannot recognise."""
-    from core.trailing_roster import EXCLUDED_AS_DUPLICATE
+    from core.trailing_roster import EXCLUDED_AS_DUPLICATE, RETIRED_FOR_LIVE_PNL
 
     measured = {leg: d for leg, d in ROSTER.items() if leg not in UNMEASURED_SEATS}
     assert len(measured) == 29
@@ -223,6 +223,12 @@ def test_roster_admits_only_selected_legs():
     assert not is_rostered("BR4H", "SHORT")  # other direction never made the cut
     assert not is_rostered("EPD3", "LONG")  # rejected for cap (would_be p95 581)
     assert not is_rostered("TSM1", "SHORT")  # rejected for cap
+    # The struck register is pinned like EXCLUDED_AS_DUPLICATE above, and the two
+    # sets must stay DISJOINT: a leg back in ROSTER while still listed as retired
+    # would make is_rostered() say yes where the register says no, and nothing else
+    # in the codebase reads RETIRED_FOR_LIVE_PNL to catch it.
+    assert set(RETIRED_FOR_LIVE_PNL) == {("MIS1-72h", "LONG"), ("AIM2", "SHORT")}
+    assert not (set(ROSTER) & set(RETIRED_FOR_LIVE_PNL))
     # Struck after the fact on their own realised book (T-2026-KYT-9050-129).
     assert not is_rostered("MIS1-72h", "LONG")
     assert not is_rostered("AIM2", "SHORT")
