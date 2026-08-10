@@ -270,8 +270,22 @@ def process_event(conn, event: dict, offset_h: int) -> None:
     update_cooldown(conn, MODEL_ID, symbol, direction)
 
 
-def main() -> None:
-    global LIVE_POSTING
+# Loop state. Module-level since T-2026-KYT-9050-135, when the loop itself moved
+# into 46_signal_consumer_runner.py: this was a local of main(), and a poll core
+# the runner calls cannot keep it there. Scope is unchanged — one instance per
+# bot module, invisible to the other four consumers in that process. It is the
+# anti-replay guard of this bot: startup() seeds it from MAX(spike_time), so a
+# poll before a successful startup would replay every old pump. The runner
+# therefore never polls an unarmed bot.
+watermark: datetime.datetime | None = None
+
+
+def startup() -> None:
+    """One-time init: DDL/index, watermark seed, feature self-check.
+
+    Everything main() did before entering its loop (T-2026-KYT-9050-135).
+    """
+    global LIVE_POSTING, watermark
     logger.info("=== 💥 AI PEX1 BOT (pump exhaustion short, S6) STARTED ===")
     if TARGET_CHANNEL_ID == 0:
         logger.warning("Neither CH_PEX1 nor CH_NEW_IDEAS set — forcing shadow-only mode.")
@@ -305,42 +319,57 @@ def main() -> None:
 
     startup_feature_selfcheck()
 
-    while True:
-        ensure_artifact()
-        if not ARTIFACT["loaded"]:
-            time.sleep(60)
-            continue
 
-        conn = get_db_connection()
-        try:
-            offset_h = detect_spike_time_offset_h(conn)
-            events = fetch_new_events(conn, watermark)
-            conn_dead = False
-            for event in events:
-                # fetch_new_events delivers ORDER BY spike_time ASC and filters
-                # strictly `> watermark` — the assignment is thus monotonic. A
-                # max() over both values would be the second place where an
-                # aware sentinel and a naive legacy column could meet
-                # (T-2026-KYT-9050-061); not needed here.
-                watermark = event["spike_time"]
+def run_poll() -> None:
+    """One poll cycle — the body of main()'s loop, unchanged.
+
+    The idle-mode branch is the one statement that had to change shape: it used
+    to be ``time.sleep(60); continue`` inside the loop, i.e. "skip this cycle".
+    Returning IS that, now that the caller owns the sleep.
+    """
+    global watermark
+    ensure_artifact()
+    if not ARTIFACT["loaded"]:
+        return
+
+    conn = get_db_connection()
+    try:
+        offset_h = detect_spike_time_offset_h(conn)
+        events = fetch_new_events(conn, watermark)
+        conn_dead = False
+        for event in events:
+            # fetch_new_events delivers ORDER BY spike_time ASC and filters
+            # strictly `> watermark` — the assignment is thus monotonic. A
+            # max() over both values would be the second place where an
+            # aware sentinel and a naive legacy column could meet
+            # (T-2026-KYT-9050-061); not needed here.
+            watermark = event["spike_time"]
+            try:
+                process_event(conn, event, offset_h)
+            except Exception as e:
+                logger.error(f"Error for {event.get('symbol')}: {e}")
+            finally:
+                # P2.32 pattern: close transaction per event ALWAYS —
+                # after a commit path the rollback is a no-op.
                 try:
-                    process_event(conn, event, offset_h)
-                except Exception as e:
-                    logger.error(f"Error for {event.get('symbol')}: {e}")
-                finally:
-                    # P2.32 pattern: close transaction per event ALWAYS —
-                    # after a commit path the rollback is a no-op.
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        logger.error("Rollback failed (dead connection) — cycle abort.")
-                        conn_dead = True
-                if conn_dead:
-                    break
-        except Exception as e:
-            logger.error(f"PEX1 scan error: {e}")
-        finally:
-            conn.close()
+                    conn.rollback()
+                except Exception:
+                    logger.error("Rollback failed (dead connection) — cycle abort.")
+                    conn_dead = True
+            if conn_dead:
+                break
+    except Exception as e:
+        logger.error(f"PEX1 scan error: {e}")
+    finally:
+        conn.close()
+
+
+def main() -> None:
+    """Standalone entry. In the fleet 46_signal_consumer_runner.py drives the
+    two functions above instead; the file stays runnable for debugging."""
+    startup()
+    while True:
+        run_poll()
         time.sleep(60)
 
 

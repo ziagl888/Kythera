@@ -107,7 +107,10 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 23,
         "restart_interval": None,
     },
-    {"name": "AI SR Bot", "script": "9_ai_sr_bot.py", "group": "strategy", "start_delay": 31, "restart_interval": None},
+    # 9 (SRA) used to hold delay 31 here. Since T-2026-KYT-9050-135 it polls
+    # inside 46_signal_consumer_runner.py — see "Signal Consumer Runner" at the
+    # end of this list. Same for 15 / 30 / 33 / 43 below; the freed delays stay
+    # free.
     {
         "name": "Pump Dump Detector",
         "script": "10_pump_dump_detector.py",
@@ -142,13 +145,6 @@ FLEET: list[dict[str, Any]] = [
         "script": "14_ai_atb_bot.py",
         "group": "ai",
         "start_delay": 71,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI AIM2 Detector",
-        "script": "15_ai_master_bot.py",
-        "group": "ai",
-        "start_delay": 79,
         "restart_interval": None,
     },
     {
@@ -250,13 +246,6 @@ FLEET: list[dict[str, Any]] = [
     },
     # ── Research Bots (Report 15: S6/S8/S10/S11 — channel CH_NEW_IDEAS) ───────
     {
-        "name": "AI PEX1 Detector",
-        "script": "30_ai_pex1_bot.py",
-        "group": "ai",
-        "start_delay": 191,
-        "restart_interval": None,
-    },
-    {
         "name": "AI FMR1 Detector",
         "script": "31_ai_fmr1_bot.py",
         "group": "ai",
@@ -268,13 +257,6 @@ FLEET: list[dict[str, Any]] = [
         "script": "32_ai_trm1_bot.py",
         "group": "ai",
         "start_delay": 207,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI FIF1 Detector",
-        "script": "33_ai_fif1_bot.py",
-        "group": "ai",
-        "start_delay": 215,
         "restart_interval": None,
     },
     # ── High-conviction throttle via RUB2-SHORT (T-2026-CU-9050-067) ──────────
@@ -360,13 +342,10 @@ FLEET: list[dict[str, Any]] = [
     # the list with the highest delay (monotonicity regression
     # backtest/test_fleet_definition.py). New entry only supervised after a
     # watchdog restart ⇒ operator gate.
-    {
-        "name": "AI FIF2 Mirror",
-        "script": "43_ai_fif2_bot.py",
-        "group": "ai",
-        "start_delay": 291,
-        "restart_interval": None,
-    },
+    # Entry given up under T-2026-KYT-9050-135 (delay 291 stays free): FIF2 is a
+    # 60 s poller on ai_signals, so it moved into 46_signal_consumer_runner.py
+    # with the other four consumers. Everything above still holds — the channel
+    # is the quiet path, the roster seat is the money path.
     # ── Unrestricted trailing twin (T-2026-KYT-9050-117) ──────────────────────
     # Bot 40's engine under TRAILING_BOT_PROFILE=free: no admission caps, ALL
     # roster trades spread evenly over CH_TRAILING_FREE_A/B (2 × Cornix-500).
@@ -419,6 +398,27 @@ FLEET: list[dict[str, Any]] = [
         "script": "45_shadow_scanner_runner.py",
         "group": "ai",
         "start_delay": 311,
+        "restart_interval": None,
+    },
+    # ── Shared signal-consumer runner (T-2026-KYT-9050-135) ───────────────────
+    # Replaces the five entries of bots 9 / 15 / 30 / 33 / 43 above (delays 31 /
+    # 79 / 191 / 215 / 291): five permanent interpreters — each with its own
+    # pandas/numpy import and minconn-2 pool — that only ever polled a table.
+    # They now share one process which calls their unchanged poll cores on their
+    # unchanged cadences (core/signal_consumers.py). Per-bot error isolation and
+    # the five original park markers stay intact; each poll core still owns its
+    # DB connection, so no transaction is shared. Unlike cluster B this touches
+    # the money path (15 and 33 post live, 43 fills a trailing roster seat) —
+    # hence the behaviour-neutrality proof in the PR. group="ai" like the bots it
+    # hosts. Last in the list with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py). Effective only after a watchdog restart
+    # (FLEET read at watchdog import) ⇒ operator gate; until then the five bots
+    # keep running from the old constellation.
+    {
+        "name": "Signal Consumer Runner",
+        "script": "46_signal_consumer_runner.py",
+        "group": "ai",
+        "start_delay": 319,
         "restart_interval": None,
     },
 ]
