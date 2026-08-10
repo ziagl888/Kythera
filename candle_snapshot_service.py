@@ -401,9 +401,13 @@ async def dormant_loop() -> None:
     service, so a sweeping process would burn ~1046 DB reads/h and hold ~320 MB
     for zero consumers — the cost the default-off gate exists to avoid.
 
-    The gate is re-read every poll (``snapshot_enabled`` reads the env at call
-    time). The ordinary flip is .env + fleet restart; re-reading just means a
-    process that is already running picks it up instead of needing a second one.
+    The gate is read at PROCESS START, not on the fly. ``snapshot_enabled``
+    does read the env on every poll, but ``load_dotenv()`` runs once at import,
+    so editing `.env` under a running process changes nothing here: a dormant
+    service stays dormant until the fleet restarts, which is exactly the
+    operator-decision path (.env + restart). The loop only ever exits for a
+    process whose own environment says the gate is on — a caller that set the
+    variable before start, or a test that drives it directly.
     """
     last_log: float | None = None
     while not snapshot_enabled():

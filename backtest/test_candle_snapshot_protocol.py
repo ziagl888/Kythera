@@ -121,24 +121,36 @@ def test_round_trip_preserves_microseconds():
 
 # ── NULL fidelity: the DB path's pandas coercion, reproduced per slice ────────
 #
-# psycopg2 hands `_fetch_df` None for a SQL NULL, never NaN. Whether the frame
-# then carries None or NaN is decided by pandas PER FRAME: a column that mixes
-# NULLs with floats becomes float64/NaN, a column that is all NULL stays
-# object/None. The store holds the wide-lookback frame, so it can carry NaN
-# where a narrow slice of the SAME data — the read the bot actually issues —
-# would have come back object/None. Sending the NULL rather than its rendering
-# is what keeps the two identical.
+# A `float8` column holds TWO different missings. psycopg2 hands `_fetch_df`
+# None for a SQL NULL and `float('nan')` for a stored NaN — and the indicator
+# engine writes stored NaNs on purpose (2_indicator_engine.py
+# `_as_of_now_window_globals`: numeric window-globals are NaN on every
+# non-reference bar, only the TEXT column becomes a real NULL). pandas then
+# decides the dtype per frame: with one real float in the column both missings
+# land on float64/NaN, but an ALL-missing column lands on float64/NaN for NaNs
+# and on object/None for NULLs.
+#
+# The store holds the wide-lookback frame, in which the two are already
+# indistinguishable. So a narrow all-missing float slice — the read the bot
+# actually issues — is REFUSED (DB fallback); anything whose dtype is decided
+# either way is served.
 
 
-def test_a_nan_travels_as_the_null_it_stands_for():
-    payload = cs.encode_frame(_frame([("BTCUSDT", _ANCHOR, float("nan"))], ["symbol", "open_time", "close"]))
-    assert payload["rows"][0][2] is None
+def test_a_nan_travels_as_a_null_in_a_column_that_also_holds_a_float():
+    """The unambiguous half: with a real float in the column the DB path yields
+    float64/NaN whichever missing the DB held, so `null` on the wire decodes to
+    exactly that."""
+    rows = [("BTCUSDT", _ANCHOR - timedelta(hours=1), 1.5), ("BTCUSDT", _ANCHOR, float("nan"))]
+    payload = cs.encode_frame(_frame(rows, ["symbol", "open_time", "close"]))
+    assert payload["rows"][1][2] is None
+    assert cs.decode_frame(payload)["close"].dtype == "float64"
 
 
-def test_an_all_null_slice_decodes_like_the_db_path():
+def test_an_all_null_float_slice_is_refused_because_the_wire_cannot_tell():
     """The sparse-indicator as-of read: `limit=1` onto a row whose indicator is
-    NULL. Serving the store's NaN would hand the bot float64/NaN where the SQL
-    path yields object/None — and every downstream `is None` check flips."""
+    missing. The stored frame renders NULL and NaN identically, so the snapshot
+    cannot know whether the SQL path would hand the bot object/None (all NULL)
+    or float64/NaN (all NaN) — it refuses and the read goes to the DB."""
     cols = ["symbol", "open_time", "rsi_14"]
     rows = [("BTCUSDT", _ANCHOR - timedelta(hours=1), 55.5), ("BTCUSDT", _ANCHOR, None)]
     stored = _frame(rows, cols)  # the wide read the sweep performed
@@ -146,12 +158,29 @@ def test_an_all_null_slice_decodes_like_the_db_path():
 
     sliced, reason = cs.select_slice(stored, limit=1, start=None, end=None)
     assert reason == ""
-    served = cs.decode_frame(cs.encode_frame(sliced))
+    with pytest.raises(cs.SnapshotAmbiguousNullError):
+        cs.encode_frame(sliced)
+
+
+def test_an_all_nan_float_slice_is_refused_not_answered_as_nulls():
+    """The counter-case that decides the design: these missings are the NaNs
+    `2_indicator_engine.py` writes, so the SQL path yields float64/NaN — the
+    mirror image of the all-NULL slice above, and indistinguishable from it on
+    the wire. Answering either shape would be wrong half the time."""
+    cols = ["symbol", "open_time", "rsi_14"]
+    rows = [
+        ("BTCUSDT", _ANCHOR - timedelta(hours=1), 55.5),
+        ("BTCUSDT", _ANCHOR, float("nan")),  # what psycopg2 reads back from 'NaN'::float8
+    ]
+    stored = _frame(rows, cols)
+
+    sliced, reason = cs.select_slice(stored, limit=1, start=None, end=None)
+    assert reason == ""
+    with pytest.raises(cs.SnapshotAmbiguousNullError):
+        cs.encode_frame(sliced)
 
     oracle = _sql_oracle(rows, cols, limit=1)  # what `... LIMIT 1` would have built
-    assert oracle["rsi_14"].dtype == object and oracle["rsi_14"].iloc[0] is None
-    pd.testing.assert_frame_equal(served, oracle, check_dtype=True, check_exact=True)
-    assert served["rsi_14"].iloc[0] is None
+    assert oracle["rsi_14"].dtype == "float64" and pd.isna(oracle["rsi_14"].iloc[0])
 
 
 def test_a_mixed_null_slice_decodes_like_the_db_path():
@@ -345,6 +374,20 @@ def test_serve_applies_the_column_projection():
 def test_serve_rejects_an_unknown_column():
     response = _get(_store(), kind=cs.KIND_CANDLES, limit=3, columns=["open_time", "not_a_column"])
     assert response["ok"] is False and response["reason"] == cs.REASON_UNKNOWN_COLUMN
+
+
+def test_serve_rejects_an_ambiguous_all_null_column():
+    """The refusal travels as an ordinary `ok: false`, so the client silently
+    takes the DB path — the only path that can tell a stored NaN from a NULL."""
+    cols = ["symbol", "open_time", "rsi_14"]
+    rows = [("BTCUSDT", _ANCHOR - timedelta(hours=1), 55.5), ("BTCUSDT", _ANCHOR, None)]
+    store = cs.SnapshotStore()
+    store.put("BTCUSDT", "1h", cs.KIND_INDICATORS, _frame(rows, cols))
+
+    response = _get(store, kind=cs.KIND_INDICATORS, limit=1)
+    assert response["ok"] is False and response["reason"] == cs.REASON_AMBIGUOUS_NULL
+    # ...and the same store answers the two-row read, where the dtype is decided:
+    assert _get(store, kind=cs.KIND_INDICATORS, limit=2)["ok"] is True
 
 
 def test_serve_rejects_a_forming_read():

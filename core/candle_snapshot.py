@@ -34,16 +34,16 @@
 # same dtypes — see backtest/test_candle_snapshot_protocol.py.
 #
 # The wire format is line-based JSON (chart_data_service.py precedent). JSON
-# carries floats round-trip-exactly (repr). A NaN travels as `null`, because in
-# a frame `_fetch_df` built a NaN can only be pandas' rendering of a SQL NULL —
-# sending the NULL is what makes the decoded dtype follow the slice exactly as
-# the DB path's would (see _encode_value). The one type JSON cannot carry at all
-# is `datetime`, so
-# datetime columns are tagged and encoded as ISO-8601; anything that is neither
+# carries floats round-trip-exactly (repr) and a missing value travels as
+# `null`. The one type JSON cannot carry at all is `datetime`, so datetime
+# columns are tagged and encoded as ISO-8601; anything that is neither
 # JSON-native nor a datetime (a `Decimal`, say) is REFUSED rather than coerced —
 # the service then answers "not covered" and the caller silently takes the DB
 # path. Losing a cache hit is cheap; serving a subtly different frame to a
 # trading bot is not.
+#
+# The one place where `null` is not enough information is an ALL-MISSING float
+# slice, and that one is refused too — see _all_null_is_ambiguous.
 #
 # WHAT IS NEVER SERVED (deliberate holes, each one a fallback, never a guess)
 # --------------------------------------------------------------------------
@@ -61,6 +61,8 @@
 #     is a LEFT JOIN, so a missing indicator row becomes a row of NULLs; rather
 #     than reproduce NULL-fill semantics in pandas we hand the request back to
 #     the DB.
+#   * a slice in which some float column is ALL missing
+#     (:func:`_all_null_is_ambiguous`).
 #   * any transport/protocol error at all.
 from __future__ import annotations
 
@@ -128,6 +130,11 @@ REASON_INDICATOR_GAP = "indicator_gap"  # joined read would need a LEFT-JOIN NUL
 REASON_ENCODE = "unencodable_value"
 REASON_BAD_REQUEST = "bad_request"
 REASON_CONFIG = "config"  # an env var this module reads is unusable
+#: An all-missing float slice: NaN-in-the-DB and NULL-in-the-DB decode to
+#: DIFFERENT dtypes and the wire cannot tell them apart (see
+#: :func:`_all_null_is_ambiguous`). An ordinary case — a flatlining coin, an
+#: as-of read of a window-global column — so it stays at DEBUG.
+REASON_AMBIGUOUS_NULL = "ambiguous_all_null"
 
 #: Reasons that indicate a real problem (unreachable service, stale frames,
 #: a typo in the endpoint env) and are therefore logged at WARNING; the rest are
@@ -143,6 +150,15 @@ _last_warned: dict[str, float] = {}
 
 class SnapshotEncodeError(RuntimeError):
     """A frame holds a value the wire format cannot carry losslessly."""
+
+
+class SnapshotAmbiguousNullError(RuntimeError):
+    """A slice holds a float column whose dtype the wire cannot pin down.
+
+    Deliberately NOT a subclass of :class:`SnapshotEncodeError`: an unencodable
+    value means something is wrong with the data, this one means the request is
+    simply not answerable from RAM — different log level, different reason code.
+    """
 
 
 def endpoint() -> tuple[str, int]:
@@ -237,14 +253,12 @@ def _encode_value(value: Any, coltype: str) -> Any:
     if value is None or value is pd.NaT:
         return None
     if isinstance(value, float) and math.isnan(value):
-        # A NaN in a stored frame is pandas' RENDERING of a SQL NULL, not a
-        # value the DB holds: psycopg2 hands `_fetch_df` None, and pandas turns
-        # it into NaN only because the rest of the column is float. So the wire
-        # carries the NULL, not the rendering — and the decode then reproduces
-        # exactly the coercion the DB path would apply to THIS slice. Shipping
-        # the NaN instead pins an all-NULL slice (a sparse indicator read with
-        # limit=1) to float64/NaN where the SQL path yields object/None, and
-        # every downstream `is None` check flips.
+        # A NaN that reaches this point sits in a column that also holds a real
+        # float (:func:`encode_frame` refused the all-missing case before
+        # calling us), and in such a column BOTH readings — a NaN the DB stores
+        # and a NULL pandas rendered as NaN — decode to float64/NaN. So `null`
+        # and `NaN` are interchangeable here and `null` is the one that is valid
+        # JSON for a strict parser.
         return None
     if coltype == _TYPE_DATETIME:
         if not isinstance(value, datetime):
@@ -263,14 +277,49 @@ def _decode_value(value: Any, coltype: str) -> Any:
     return value
 
 
+def _all_null_is_ambiguous(series: pd.Series) -> bool:
+    """True when this column's dtype cannot be reproduced from the wire.
+
+    Every missing value travels as `null`, so the decoded frame is the frame
+    `_fetch_df` would have built if the DB had sent NULLs. That is the right
+    frame — except where the DB did NOT send a NULL. `float8` is the one type
+    here that holds a second kind of missing: a stored NaN, which psycopg2 reads
+    back as `float('nan')`, and which `2_indicator_engine.py` writes on purpose
+    (``_as_of_now_window_globals``: numeric window-globals become NaN on every
+    non-reference bar; only the TEXT column becomes a real NULL).
+
+    pandas then decides the dtype per frame. With at least one real float in the
+    column both missings land on float64/NaN, so the two are interchangeable and
+    the decode is exact. An ALL-missing float column is where they part: NULLs
+    give object/None, NaNs give float64/NaN — and the wide frame the store holds
+    renders both as NaN, so nothing on this side can tell which one the SQL path
+    would produce. Such a slice is REFUSED (a flatlining coin's RSI, an as-of
+    read landing on a NULLed window-global bar). Guessing either way would hand
+    half the callers a frame whose `is None` / `pd.notna` checks answer
+    differently from the DB path's.
+
+    Non-float columns have one kind of missing only — NaT is not a value
+    PostgreSQL can store in a `timestamptz`, and a TEXT column's missing is
+    always a NULL — so their all-missing slices reproduce exactly and are served
+    (see the text-column test in backtest/test_candle_snapshot_protocol.py).
+    """
+    if not pd.api.types.is_float_dtype(series):
+        return False
+    return len(series) > 0 and bool(series.isna().all())
+
+
 def encode_frame(df: pd.DataFrame) -> dict[str, Any]:
     """Serialise a frame into the wire payload (columns + type tags + rows).
 
     Raises :class:`SnapshotEncodeError` for any value the format cannot carry
-    without changing it — the caller answers "not covered" and the client takes
-    the DB path.
+    without changing it, and :class:`SnapshotAmbiguousNullError` for a column
+    whose dtype the wire cannot pin down — the caller answers "not covered" and
+    the client takes the DB path.
     """
     columns = [str(c) for c in df.columns]
+    for i, name in enumerate(columns):
+        if _all_null_is_ambiguous(df.iloc[:, i]):
+            raise SnapshotAmbiguousNullError(f"{name}: all-missing float column — DB NaN and DB NULL differ here")
     coltypes = [_column_type(df.iloc[:, i]) for i in range(df.shape[1])]
     rows = [
         [_encode_value(value, coltype) for value, coltype in zip(row, coltypes, strict=True)]
@@ -560,6 +609,8 @@ def serve_request(store: SnapshotStore, req: dict[str, Any], *, now: datetime | 
         payload["ok"] = True
         payload["frame_open_time"] = None if frame_max is None else _as_datetime(frame_max).isoformat()
         return payload
+    except SnapshotAmbiguousNullError as exc:
+        return {"ok": False, "reason": REASON_AMBIGUOUS_NULL, "detail": str(exc)}
     except SnapshotEncodeError as exc:
         return {"ok": False, "reason": REASON_ENCODE, "detail": str(exc)}
     except Exception as exc:  # noqa: BLE001 — a refusal is always safe; a crash is not
@@ -767,6 +818,8 @@ __all__ = [
     "KIND_CANDLES",
     "KIND_INDICATORS",
     "KIND_JOINED",
+    "REASON_AMBIGUOUS_NULL",
+    "SnapshotAmbiguousNullError",
     "SnapshotEncodeError",
     "SnapshotStore",
     "decode_frame",
