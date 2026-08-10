@@ -408,4 +408,24 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 299,
         "restart_interval": None,
     },
+    # ── Shared candle snapshot (T-2026-KYT-9050-132) ──────────────────────────
+    # "Fetch once, serve many": reads each (symbol, tf) once per candle period
+    # and serves the nine hourly scanners' overlapping windows from RAM
+    # (core/candle_snapshot.py hooks into core/candles.py — no bot is touched).
+    # Consumers only appear when KYTHERA_CANDLE_SNAPSHOT is turned on; with the
+    # gate off (the default) the process runs idle and nothing queries it, so
+    # listing it here is safe ahead of the rollout decision. group="core": it is
+    # infrastructure like chart_data_service, not a strategy. Last in the list
+    # with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py) — it does not need an early slot,
+    # because a cold store simply falls back to the DB path. New entry only
+    # supervised after a watchdog restart (FLEET read at watchdog import) ⇒
+    # operator gate.
+    {
+        "name": "Candle Snapshot Service",
+        "script": "candle_snapshot_service.py",
+        "group": "core",
+        "start_delay": 307,
+        "restart_interval": None,
+    },
 ]

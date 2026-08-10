@@ -1,3 +1,52 @@
+## [2026-08-10] Shared candle-snapshot service — "fetch once, serve many" for the nine hourly scanners (T-2026-KYT-9050-132)
+
+Bots 7, 11, 12, 13, 14, 18, 24, 25 and 34 walk the same ~523 coins at staggered minutes and read
+overlapping 1h windows of the same rows; 60-75 % of the ~6-7k candle queries per minute are
+duplicates across bots, and `candles JOIN indicators` is the #1 statement in `pg_stat_statements`
+(3.0M calls @ 36.5 ms). One process now reads each (symbol, tf) once per candle period and serves
+the bots' slices from RAM. **Gated off — `KYTHERA_CANDLE_SNAPSHOT` defaults to 0, so this diff
+changes nothing about live behaviour.** Turning it on is an operator decision (.env + fleet restart).
+
+* **`candle_snapshot_service.py` (new, fleet entry `start_delay=307`, group `core`):** in-memory
+  frames + localhost TCP, line-based JSON — the `chart_data_service.py` pattern. The refresh loop
+  asks *in RAM* which entries are behind the newest closed candle and re-reads only those, so a
+  poll over a warm store costs zero DB work and the load is one read per (symbol, tf, kind) per
+  period. Entries that stay behind (thin/delisted coins, ingestion lag) back off for 300 s instead
+  of being retried every poll. No disk snapshot on purpose: a store restored from before a restart
+  is stale by definition, and stale is the one thing this service must never serve.
+* **Client hooked inside `core/candles.py` only** (`read_candles`, `read_indicators`,
+  `read_candles_with_indicators` → `core/candle_snapshot.py`). No bot script and no
+  `core/*_features.py` builder is touched — that is what the module header has promised since
+  Phase A ("swap the internals without touching a single bot"). With the gate off the flag check
+  short-circuits before the client module is even imported.
+* **Identical by construction, not by inspection.** `_fetch_df` builds every frame as
+  `pd.DataFrame(cur.fetchall(), columns=…)`; the snapshot path ships the same ROW VALUES and
+  rebuilds with the same call, so values *and* dtypes match. Slicing reproduces `_windowed_select`
+  (window → DESC → LIMIT → ASC), including the `LIMIT 0` case that `iloc[-0:]` would have turned
+  into "the whole frame". A value JSON cannot carry losslessly (a `Decimal`) is refused, never
+  coerced.
+* **Five doors it will not walk through**, each a transparent fallback to the DB path with a
+  throttled log line: `include_forming=True` (the store holds closed candles only — contract 2),
+  an uncovered (symbol, tf, kind), a window the frame cannot prove it spans, a joined read whose
+  candle rows do not all have an indicator row (the SQL LEFT JOIN would emit NULLs), and any
+  transport error at all.
+* **Staleness is checked twice.** The service refuses a frame older than the newest closed candle,
+  and the client re-checks the returned watermark against its *own* clock — T-2026-KYT-9050-068
+  taught that "the backend says it is fine" is exactly the assurance that cannot stand alone.
+* **Coverage is honest about its holes.** The lookback defaults (2400 candles / 500 indicator rows,
+  both env-tunable) are sized to bot 14's `limit=1700`, the 95-day windows of bots 13/34 and bot
+  12's `limit=500` joined read — pinned by a test, because shrinking them turns those bots into
+  permanent fallbacks *silently*. A read with neither `limit` nor `start` is never served. The
+  store costs ~250 MB of indicators + ~70 MB of candles at the defaults; the measured figure is
+  logged after every sweep — check it against free RAM before flipping the gate.
+* **Tests (DB-free):** `backtest/test_candle_snapshot_protocol.py` (wire round trip incl. NaN,
+  microseconds, NULL/text columns; slicing against a SQL oracle; coverage; staleness; the joined
+  composition), `backtest/test_candle_snapshot_client.py` (a real service socket on an ephemeral
+  port, driven through `core/candles.py`; gate-off no-op; every fallback door), and
+  `backtest/test_candle_snapshot_service.py` (due-list, backoff, sweep fan-out).
+  `backtest/test_candles.py` 60/60, `backtest/test_fleet_definition.py` 8/8, regression guard
+  24/24 without refresh.
+
 ## [2026-08-09] There is no FIF channel — the four remaining sites now say where the post lands (T-2026-KYT-9050-119)
 
 Follow-up `#T118-2`. T-118 fixed the sites that were WRONG about execution; these four were right
