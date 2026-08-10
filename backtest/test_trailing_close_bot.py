@@ -179,11 +179,17 @@ UNMEASURED_SEATS = {("ODS1", "SHORT"), ("FIF2", "LONG"), ("FIF2", "SHORT")}
 def test_roster_admits_only_selected_legs():
     """AK1. The roster is the PR-#198 selection minus ROM1 — not 'all live bots'.
 
-    31 measured seats = the 33 of the p95 fill minus ROM1 LONG/SHORT. Bot 28
-    re-forwards trades the original legs already post (double-counting, T-052), and
-    its rows carry the ORIGINAL open_time, so no freshness window can admit it
-    honestly. The exclusion is documented in
+    29 measured seats = the 33 of the p95 fill, minus ROM1 LONG/SHORT, minus
+    MIS1-72h LONG and AIM2 SHORT. Bot 28 re-forwards trades the original legs
+    already post (double-counting, T-052), and its rows carry the ORIGINAL
+    open_time, so no freshness window can admit it honestly — documented in
     core.trailing_roster.EXCLUDED_AS_DUPLICATE.
+
+    The other two went the opposite way: they were struck AFTER the fact on their
+    own realised trailing book (-185.72 and -89.02 USD, T-2026-KYT-9050-126/-129),
+    not on a verdict of the simulation. That register is
+    core.trailing_roster.RETIRED_FOR_LIVE_PNL, and it is a per-DIRECTION decision —
+    AIM2 LONG keeps its seat.
 
     On top sit the seats with no measured density: ODS1 SHORT
     (T-2026-KYT-9050-106) and FIF2 LONG/SHORT (T-2026-KYT-9050-115). They are
@@ -197,10 +203,10 @@ def test_roster_admits_only_selected_legs():
     contribution is the legs that never earned a seat. What its seat did require is
     the symbol-scoped re-entry lock — a re-forwarded row carries a new
     src_signal_id, which the src-keyed lock cannot recognise."""
-    from core.trailing_roster import EXCLUDED_AS_DUPLICATE
+    from core.trailing_roster import EXCLUDED_AS_DUPLICATE, RETIRED_FOR_LIVE_PNL
 
     measured = {leg: d for leg, d in ROSTER.items() if leg not in UNMEASURED_SEATS}
-    assert len(measured) == 31
+    assert len(measured) == 29
     assert len(ROSTER) == len(measured) + len(UNMEASURED_SEATS)
     assert UNMEASURED_SEATS <= set(ROSTER), "every declared placeholder seat must actually be seated"
     # Every unmeasured leg must sit strictly below every measured one — the density
@@ -213,15 +219,25 @@ def test_roster_admits_only_selected_legs():
 
     assert set(EXCLUDED_AS_DUPLICATE) == {("ROM1", "LONG"), ("ROM1", "SHORT")}
     assert not is_rostered("ROM1", "LONG") and not is_rostered("ROM1", "SHORT")
-    assert is_rostered("MIS1-72h", "LONG")  # accepted, density 0.959
-    assert not is_rostered("MIS1-72h", "SHORT")  # other direction never made the cut
+    assert is_rostered("BR4H", "LONG")  # accepted, density 0.549
+    assert not is_rostered("BR4H", "SHORT")  # other direction never made the cut
     assert not is_rostered("EPD3", "LONG")  # rejected for cap (would_be p95 581)
     assert not is_rostered("TSM1", "SHORT")  # rejected for cap
+    # The struck register is pinned like EXCLUDED_AS_DUPLICATE above, and the two
+    # sets must stay DISJOINT: a leg back in ROSTER while still listed as retired
+    # would make is_rostered() say yes where the register says no, and nothing else
+    # in the codebase reads RETIRED_FOR_LIVE_PNL to catch it.
+    assert set(RETIRED_FOR_LIVE_PNL) == {("MIS1-72h", "LONG"), ("AIM2", "SHORT")}
+    assert not (set(ROSTER) & set(RETIRED_FOR_LIVE_PNL))
+    # Struck after the fact on their own realised book (T-2026-KYT-9050-129).
+    assert not is_rostered("MIS1-72h", "LONG")
+    assert not is_rostered("AIM2", "SHORT")
+    assert is_rostered("AIM2", "LONG")  # direction, not model — the LONG leg earns
     # Historic model spellings must land on the leg that earned the seat, not miss it.
-    assert leg_key("MSI1-72H_pump", "long") == ("MIS1-72h", "LONG")
-    assert is_rostered("MSI1-72H_pump", "long")
+    assert leg_key("MSI1-168H_pump", "long") == ("MIS1-168h", "LONG")
+    assert is_rostered("MSI1-168H_pump", "long")
 
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG"), _src_row(2, "ETHUSDT", "EPD3", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG"), _src_row(2, "ETHUSDT", "EPD3", "LONG")])
     got, all_open = bot.read_source_signals(conn)
     assert set(got) == {1}, got
     assert all_open == {1, 2}  # the filtered-out leg is still a KNOWN open source
@@ -229,7 +245,7 @@ def test_roster_admits_only_selected_legs():
 
 def test_non_live_leg_is_never_mirrored():
     """AK2. shadow_gate beats the roster — the roster is a still from 2026-07-26."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     with mock.patch.object(bot.shadow_gate, "is_live", return_value=False):
         assert bot.read_source_signals(conn)[0] == {}
     assert set(bot.read_source_signals(conn)[0]) == {1}  # control: live again
@@ -237,8 +253,8 @@ def test_non_live_leg_is_never_mirrored():
 
 def test_signal_without_geometry_is_not_mirrored():
     """A half order-geometry in a Cornix channel is worse than no mirror."""
-    no_sl = (1, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 100.0, None, "[110.0]", "20x", 1.0)
-    no_tgt = (2, "ETHUSDT", "MIS1-72h", "LONG", 100.0, 100.0, 95.0, "[]", "20x", 1.0)
+    no_sl = (1, "BTCUSDT", "BR4H", "LONG", 100.0, 100.0, None, "[110.0]", "20x", 1.0)
+    no_tgt = (2, "ETHUSDT", "BR4H", "LONG", 100.0, 100.0, 95.0, "[]", "20x", 1.0)
     assert bot.read_source_signals(FakeConn(ai_signals=[no_sl, no_tgt]))[0] == {}
 
 
@@ -250,7 +266,7 @@ def test_signal_without_geometry_is_not_mirrored():
 def test_second_signal_on_same_symbol_is_rejected():
     """AK3. `Close <SYMBOL>` is symbol-wide: two positions on one symbol means the
     trailing exit of one flattens the other."""
-    cands = [_cand(1, "BTCUSDT", "MIS1-72h", "LONG"), _cand(2, "BTCUSDT", "RUB1", "LONG")]
+    cands = [_cand(1, "BTCUSDT", "BR4H", "LONG"), _cand(2, "BTCUSDT", "RUB1", "LONG")]
     admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500)
     assert [sid for sid, _ in admitted] == [2]  # RUB1 is denser (2.346 > 0.959)
     assert [(sid, why) for sid, _, why in rejected] == [(1, "SYMBOL_HELD")]
@@ -264,8 +280,8 @@ def test_slot_cap_rejects_by_density():
     """AK4. The chosen selection peaks at 2001 concurrent = 4x the Cornix cap. Who
     gets refused has to be our decision (by net per slot-day), not Cornix' by luck."""
     cands = [
-        _cand(1, "AAAUSDT", "ATS2", "LONG"),  # density 0.054 — thinnest of the 33
-        _cand(2, "BBBUSDT", "AIM2", "SHORT"),  # density 4.294 — dense
+        _cand(1, "AAAUSDT", "ATS2", "LONG"),  # density 0.054 — thinnest measured seat
+        _cand(2, "BBBUSDT", "RUB1", "SHORT"),  # density 3.943 — dense
         _cand(3, "CCCUSDT", "EPD1", "SHORT"),  # density 2.238
     ]
     admitted, rejected = bot.admit(cands, set(), free_slots=2)
@@ -372,7 +388,7 @@ def test_only_new_highs_are_worth_persisting():
 def test_source_close_mirrors_into_a_close():
     """AK8. When the fleet closes the trade (SL/TP/timeout), the mirror must close
     too — otherwise the A/B arm stops measuring the same trades."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, None, None, None, None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 5.0, True, None, None, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={"BTCUSDT": 104.0}):
@@ -384,7 +400,7 @@ def test_source_close_mirrors_into_a_close():
 
 def test_trailing_trigger_closes_the_mirror():
     """The bot's one own decision: peak +10 %, give back to +9 % → close."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None, None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 10.0, True, None, None, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     src = {42: {"symbol": "BTCUSDT"}}
@@ -398,9 +414,9 @@ def test_time_stop_closes_only_stale_unarmed_mirrors():
     """T-052 loss bound. A mirror that never cleared the activation and is older
     than TIME_STOP_H closes at the market; an ARMED mirror of the same age belongs
     to the trail, a YOUNG unarmed one keeps its chance."""
-    stale = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 25), 90.0, None)
-    armed = (2, 42, "BBBUSDT", "MIS1-72h", "LONG", 100.0, 3.0, True, None, None, _recent(60 * 25), 90.0, None)
-    young = (3, 43, "CCCUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60), 90.0, None)
+    stale = (1, 41, "AAAUSDT", "BR4H", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 25), 90.0, None)
+    armed = (2, 42, "BBBUSDT", "BR4H", "LONG", 100.0, 3.0, True, None, None, _recent(60 * 25), 90.0, None)
+    young = (3, 43, "CCCUSDT", "BR4H", "LONG", 100.0, 1.0, True, None, None, _recent(60), 90.0, None)
     conn = FakeConn(mirrors=[stale, armed, young])
     mirrors = bot.read_open_mirrors(conn)
     src = {41: {"symbol": "AAAUSDT"}, 42: {"symbol": "BBBUSDT"}, 43: {"symbol": "CCCUSDT"}}
@@ -424,7 +440,7 @@ def test_arming_at_the_deadline_poll_beats_the_time_stop():
     the decision uses only the peak as of THIS price, never a future one — the
     look-ahead the study retracted was arming from prices hours ahead (Nachtrag 4),
     not one poll of granularity."""
-    row = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.5, True, None, None, _recent(60 * 25), 90.0, None)
+    row = (1, 41, "AAAUSDT", "BR4H", "LONG", 100.0, 1.5, True, None, None, _recent(60 * 25), 90.0, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with (
@@ -443,7 +459,7 @@ def test_time_stop_wave_is_rate_limited():
     At most TIME_STOP_MAX_PER_CYCLE close per cycle — the Telegram outbox is FIFO
     for the whole fleet, a 150-message burst would stall everyone else's posts."""
     rows = [
-        (i, 100 + i, f"C{i}USDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 30), 90.0, None)
+        (i, 100 + i, f"C{i}USDT", "BR4H", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 30), 90.0, None)
         for i in range(bot.TIME_STOP_MAX_PER_CYCLE + 10)
     ]
     conn = FakeConn(mirrors=rows)
@@ -473,8 +489,8 @@ def test_grandfathered_legacy_book_rides_past_the_time_stop():
     to their natural SL/TP at the operator's explicit risk — the time-stop governs
     only the new regime. The cutoff is a fixed timestamp, not 'process start', so a
     later restart cannot silently exempt a fresh cohort."""
-    legacy = (1, 41, "AAAUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 72), 90.0, None)
-    fresh_stale = (2, 42, "BBBUSDT", "MIS1-72h", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 25), 90.0, None)
+    legacy = (1, 41, "AAAUSDT", "BR4H", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 72), 90.0, None)
+    fresh_stale = (2, 42, "BBBUSDT", "BR4H", "LONG", 100.0, 1.0, True, None, None, _recent(60 * 25), 90.0, None)
     conn = FakeConn(mirrors=[legacy, fresh_stale])
     mirrors = bot.read_open_mirrors(conn)
     src = {41: {"symbol": "AAAUSDT"}, 42: {"symbol": "BBBUSDT"}}
@@ -492,13 +508,13 @@ def test_exposure_cap_refuses_only_the_stretching_side():
     """T-052 structural bound: with the book already EXPOSURE_CAP longs ahead, a
     new LONG is refused with its own reason while a SHORT is still admitted."""
     full = {"LONG": bot.EXPOSURE_CAP, "SHORT": 0}
-    admitted, rejected = bot.admit([_cand(1, "AAAUSDT", "MIS1-72h", "LONG")], set(), 500, open_by_dir=dict(full))
+    admitted, rejected = bot.admit([_cand(1, "AAAUSDT", "BR4H", "LONG")], set(), 500, open_by_dir=dict(full))
     assert admitted == [] and rejected[0][2] == "EXPOSURE_CAP"
     admitted, rejected = bot.admit([_cand(2, "BBBUSDT", "MIS1-8h", "SHORT")], set(), 500, open_by_dir=dict(full))
     assert [sid for sid, _ in admitted] == [2] and rejected == []
     # The cap is a NET bound: an admitted SHORT reduces the imbalance, so a LONG
     # arriving in the same cycle fits again — that is intended, not a leak.
-    both = [_cand(1, "AAAUSDT", "MIS1-72h", "LONG"), _cand(2, "BBBUSDT", "MIS1-8h", "SHORT")]
+    both = [_cand(1, "AAAUSDT", "BR4H", "LONG"), _cand(2, "BBBUSDT", "MIS1-8h", "SHORT")]
     admitted, _ = bot.admit(both, set(), 500, open_by_dir=dict(full))
     assert {sid for sid, _ in admitted} == {1, 2}
 
@@ -506,7 +522,7 @@ def test_exposure_cap_refuses_only_the_stretching_side():
 def test_exposure_cap_counts_admissions_within_the_cycle():
     """A single cycle full of one-sided candidates must not overrun the cap: the
     counter advances with every admission, not only with the DB state."""
-    cands = [_cand(i, f"C{i}USDT", "MIS1-72h", "LONG") for i in range(bot.EXPOSURE_CAP + 10)]
+    cands = [_cand(i, f"C{i}USDT", "BR4H", "LONG") for i in range(bot.EXPOSURE_CAP + 10)]
     admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500)
     assert len(admitted) == bot.EXPOSURE_CAP
     assert {why for _sid, _sig, why in rejected} == {"EXPOSURE_CAP"}
@@ -515,7 +531,7 @@ def test_exposure_cap_counts_admissions_within_the_cycle():
 def test_no_price_means_no_decision():
     """A coin without a tick keeps its position — closing it would be a statement
     about a market we cannot see."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None, None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 10.0, True, None, None, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
@@ -536,7 +552,7 @@ def test_a_failed_batch_never_falls_back_to_per_coin_calls():
 
     # And behaviourally: a dead batch produces no calls and no decisions at all.
     rows = [
-        (i, 40 + i, f"C{i}USDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None, None, None) for i in range(30)
+        (i, 40 + i, f"C{i}USDT", "BR4H", "LONG", 100.0, 10.0, True, None, None, None, None, None) for i in range(30)
     ]
     conn = FakeConn(mirrors=rows)
     mirrors = bot.read_open_mirrors(conn)
@@ -549,7 +565,7 @@ def test_a_failed_batch_never_falls_back_to_per_coin_calls():
 def test_source_gone_without_a_price_closes_with_an_unknown_mark():
     """The source no longer holds it, so holding is wrong — but the ledger must not
     claim a mark nobody measured."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, None, None, None, None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 5.0, True, None, None, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={}):
@@ -571,7 +587,7 @@ def test_exactly_one_parsable_message_per_entry():
     """AK9 (hard rule 4). A second parsable message is a second position."""
     sig = {
         "symbol": "BTCUSDT",
-        "tag": "MIS1-72h",
+        "tag": "BR4H",
         "direction": "LONG",
         "entry": 100.0,
         "sl": 95.0,
@@ -586,7 +602,7 @@ def test_exactly_one_parsable_message_per_entry():
 
 
 def test_close_command_is_not_parsable_as_an_entry():
-    row = {"symbol": "BTCUSDT", "model": "MIS1-72h", "direction": "LONG", "id": 1, "posted": True}
+    row = {"symbol": "BTCUSDT", "model": "BR4H", "direction": "LONG", "id": 1, "posted": True}
     cmd, info = bot.close_messages(row, bot.REASON_TRAIL, -1.5)
     assert cmd == "Close BTCUSDT"
     for msg in (cmd, info):
@@ -599,7 +615,7 @@ def test_cornix_block_is_shared():
     (PR #197). A private copy in the bot is how that removal reaches one publisher
     and not the other."""
     got = build_cornix_block(
-        model_tag="MIS1-72h-TRAIL",
+        model_tag="BR4H-TRAIL",
         symbol="BTCUSDT",
         direction="LONG",
         lev="20x",
@@ -617,7 +633,7 @@ def test_cornix_block_is_shared():
         "💰 TP2: $ 63000.0000\n"
         "💰 TP3: $ 64000.0000\n"
         "💸 Stop Loss: $ 58000.0000\n"
-        "🧠 Trade idea generated by AI module MIS1-72h-TRAIL"
+        "🧠 Trade idea generated by AI module BR4H-TRAIL"
     ), got
     assert "Entry 2" not in got  # PR #197 — single-entry, arm B
     assert got.count("CMP Entry") == 1
@@ -635,7 +651,7 @@ def test_post_ai_signal_still_publishes_exactly_the_shared_block():
         signal_post.post_ai_signal(
             conn,
             CHANNEL,
-            "MIS1-72h",
+            "BR4H",
             "BTCUSDT",
             "LONG",
             0.8,
@@ -647,7 +663,7 @@ def test_post_ai_signal_still_publishes_exactly_the_shared_block():
         )
     published = conn.store["outbox"][0][1]
     assert published == build_cornix_block(
-        "MIS1-72h",
+        "BR4H",
         "BTCUSDT",
         "LONG",
         "20x",
@@ -669,7 +685,7 @@ def test_default_is_shadow_only():
     assert shadow.TARGET_CHANNELS == (0,)  # the "no real channel" sentinel
     assert shadow.POSTING_ENABLED is False
 
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     sources, _ = shadow.read_source_signals(conn)
     assert shadow.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.0}) == 1  # tracked …
     assert conn.store["outbox"] == []  # … but nothing published
@@ -677,7 +693,7 @@ def test_default_is_shadow_only():
 
 
 def test_live_gate_open_publishes_two_messages():
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     bot.open_mirrors(conn, bot.read_source_signals(conn)[0], {}, set(), prices={"BTCUSDT": 101.0})
     assert len(conn.store["outbox"]) == 2  # cornix + info, nothing more
     assert all(row[0] == CHANNEL for row in conn.store["outbox"])
@@ -690,7 +706,7 @@ def test_bot_never_writes_ai_signals():
     for verb in ("INSERT INTO ai_signals", "UPDATE ai_signals", "DELETE FROM ai_signals"):
         assert verb not in src, verb
     # And at runtime: a full open+poll cycle touches only its own tables + outbox.
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     bot.open_mirrors(conn, bot.read_source_signals(conn)[0], {}, set(), prices={"BTCUSDT": 101.0})
     writes = [s for s, _ in conn.store["sql"] if s.split()[0] in ("INSERT", "UPDATE", "DELETE")]
     assert writes and all(("trailing_positions" in w or "telegram_outbox" in w) for w in writes), writes
@@ -708,7 +724,7 @@ def test_a_trailed_out_trade_is_never_re_entered():
     """The 10-second re-entry carousel. With Cornix attached this is real money:
     the bot would re-open the position on every poll until the fleet closes the
     source trade, hours or days later."""
-    src = _src_row(42, "BTCUSDT", "MIS1-72h", "LONG")
+    src = _src_row(42, "BTCUSDT", "BR4H", "LONG")
     conn = FakeConn(ai_signals=[src])
     sources, _ = bot.read_source_signals(conn)
 
@@ -722,7 +738,7 @@ def test_a_trailed_out_trade_is_never_re_entered():
 def test_insert_losing_the_race_publishes_nothing():
     """Write first, publish only on a real insert (the P2.8 pattern). A post whose
     row lost the unique index is a position nobody will ever close."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     sources, _ = bot.read_source_signals(conn)
 
     real_cursor = conn.cursor
@@ -743,7 +759,7 @@ def test_retired_leg_closes_with_its_own_reason():
     """A leg that leaves the register while its trade runs still ends the mirror —
     but it is not the same event as the fleet closing the trade, and the ledger
     must be able to tell them apart."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, None, None, None, None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 5.0, True, None, None, None, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     with mock.patch.object(bot, "get_live_prices_batch", return_value={"BTCUSDT": 104.0}):
@@ -766,7 +782,7 @@ def test_already_running_trades_are_recorded_not_mirrored():
     """An old trade is remembered so it is never mirrored — and never re-considered."""
     conn = FakeConn(
         ai_signals=[
-            _src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_sec=240000.0),  # ~3 days old
+            _src_row(1, "BTCUSDT", "BR4H", "LONG", age_sec=240000.0),  # ~3 days old
             _src_row(2, "ETHUSDT", "RUB1", "LONG", age_sec=5.0),  # opened just now
         ]
     )
@@ -794,25 +810,25 @@ def test_the_age_cutoff_keeps_the_decision_current():
     180. 240 s covers both leg families; a signal beyond that is a genuinely old
     trade and stays out (operator decision Michi, supersedes the T-051 30 s)."""
     assert bot.MAX_MIRROR_AGE_SEC <= 240.0, bot.MAX_MIRROR_AGE_SEC
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG", age_sec=10.0)])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG", age_sec=10.0)])
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.0}) == 1
 
     # 95 s = tick-leg median insert latency; 190 s = the candle-cycle wall that
     # rejected 139 longs in 6 h under the 180 s window. Both must admit.
     for sid, sym, age in ((2, "ETHUSDT", 95.0), (3, "ADAUSDT", 190.0)):
-        lagged = FakeConn(ai_signals=[_src_row(sid, sym, "MIS1-72h", "LONG", age_sec=age)])
+        lagged = FakeConn(ai_signals=[_src_row(sid, sym, "BR4H", "LONG", age_sec=age)])
         src2, _ = bot.read_source_signals(lagged)
         assert bot.open_mirrors(lagged, src2, {}, set(), prices={sym: 101.0}) == 1, age
 
-    stale = FakeConn(ai_signals=[_src_row(3, "SOLUSDT", "MIS1-72h", "LONG", age_sec=600.0)])
+    stale = FakeConn(ai_signals=[_src_row(3, "SOLUSDT", "BR4H", "LONG", age_sec=600.0)])
     src3, _ = bot.read_source_signals(stale)
     assert bot.open_mirrors(stale, src3, {}, set(), prices={"SOLUSDT": 101.0}) == 0
 
 
 def test_missing_open_time_counts_as_old():
     """A NULL open_time is unknowable age — in doubt, do not mirror."""
-    row = (1, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 100.0, 95.0, "[110.0]", "20x", None)
+    row = (1, "BTCUSDT", "BR4H", "LONG", 100.0, 100.0, 95.0, "[110.0]", "20x", None)
     conn = FakeConn(ai_signals=[row])
     sources, _ = bot.read_source_signals(conn)
     assert sources[1]["age_sec"] == float("inf")
@@ -840,8 +856,8 @@ def test_rejections_are_summarised_not_logged_per_item():
         sources = {
             i: {
                 "symbol": "BTCUSDT",
-                "model": "MIS1-72h",
-                "tag": "MIS1-72h",
+                "model": "BR4H",
+                "tag": "BR4H",
                 "direction": "LONG",
                 "entry": 100.0,
                 "sl": 95.0,
@@ -890,7 +906,7 @@ def test_shadow_mode_keeps_its_book():
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Symbol cooldown after a close. Measured live on 2026-07-27: XTZUSDT `Close` and
-# a fresh entry in the SAME SECOND (SRA2 SHORT -> MIS1-72h LONG), ENAUSDT 3s apart
+# a fresh entry in the SAME SECOND (SRA2 SHORT -> BR4H LONG), ENAUSDT 3s apart
 # (ATS2 LONG -> MAX1 SHORT). The outbox delivers in order, but Cornix then fires
 # two opposite market orders at Binance almost simultaneously.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -898,7 +914,7 @@ def test_shadow_mode_keeps_its_book():
 
 def test_a_symbol_with_a_close_in_flight_is_not_re_admitted():
     """The race we refuse to take: overtaking our own Close with a counter-order."""
-    cands = [_cand(1, "XTZUSDT", "MIS1-72h", "LONG")]
+    cands = [_cand(1, "XTZUSDT", "BR4H", "LONG")]
     admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500, cooling={"XTZUSDT"})
     assert admitted == []
     assert [(sid, why) for sid, _, why in rejected] == [(1, "SYMBOL_COOLING")]
@@ -912,7 +928,7 @@ def test_open_mirrors_actually_applies_the_cooldown():
     """Wiring pin. `admit` and `read_cooling_symbols` are both correct in isolation;
     this is the one that fails if open_mirrors forgets to pass the cooling set —
     the exact defect a mutation test exposed when the pins tested only the parts."""
-    conn = FakeConn(ai_signals=[_src_row(1, "XTZUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "XTZUSDT", "BR4H", "LONG")])
     conn.store["cooling"] = ["XTZUSDT"]
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"XTZUSDT": 101.0}) == 0
@@ -942,7 +958,7 @@ def test_cooldown_is_long_enough_to_outlive_a_poll():
 def test_symbol_held_still_wins_over_cooling():
     """An already-open position is the stronger reason — the operator reading the
     log should see the real cause, not the milder one."""
-    admitted, rejected = bot.admit([_cand(1, "BTCUSDT", "MIS1-72h", "LONG")], {"BTCUSDT"}, 500, cooling={"BTCUSDT"})
+    admitted, rejected = bot.admit([_cand(1, "BTCUSDT", "BR4H", "LONG")], {"BTCUSDT"}, 500, cooling={"BTCUSDT"})
     assert admitted == [] and rejected[0][2] == "SYMBOL_HELD"
 
 
@@ -954,7 +970,7 @@ def test_symbol_held_still_wins_over_cooling():
 
 
 def test_a_symbol_the_trail_just_exited_is_not_re_entered():
-    cands = [_cand(1, "XTZUSDT", "MIS1-72h", "LONG")]
+    cands = [_cand(1, "XTZUSDT", "BR4H", "LONG")]
     admitted, rejected = bot.admit(cands, held_symbols=set(), free_slots=500, locked={"XTZUSDT"})
     assert admitted == []
     assert [(sid, why) for sid, _, why in rejected] == [(1, "SYMBOL_REENTRY_LOCK")]
@@ -967,7 +983,7 @@ def test_re_entry_lock_reports_itself_rather_than_the_milder_cooldown():
     """A just-trailed symbol trips both windows. The log has to name the one that
     will still be blocking in an hour, not the one that expires in a minute."""
     admitted, rejected = bot.admit(
-        [_cand(1, "XTZUSDT", "MIS1-72h", "LONG")], set(), 500, cooling={"XTZUSDT"}, locked={"XTZUSDT"}
+        [_cand(1, "XTZUSDT", "BR4H", "LONG")], set(), 500, cooling={"XTZUSDT"}, locked={"XTZUSDT"}
     )
     assert admitted == [] and rejected[0][2] == "SYMBOL_REENTRY_LOCK"
 
@@ -976,7 +992,7 @@ def test_open_mirrors_actually_applies_the_re_entry_lock():
     """Wiring pin, same shape as the cooldown one: `admit` and
     `read_reentry_locked_symbols` are each correct alone, and this is the assertion
     that fails if open_mirrors forgets to pass the locked set through."""
-    conn = FakeConn(ai_signals=[_src_row(1, "XTZUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "XTZUSDT", "BR4H", "LONG")])
     conn.store["locked"] = ["XTZUSDT"]
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"XTZUSDT": 101.0}) == 0
@@ -1053,7 +1069,7 @@ def test_fill_needs_the_market_to_reach_the_entry():
 def test_an_unfilled_mirror_is_never_trailed():
     """The phantom exit this task removes: no fill means Cornix holds nothing, so
     there is nothing to trail and nothing to close."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, 101.5, _recent(), None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 10.0, True, None, 101.5, _recent(), None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     assert mirrors[42]["filled"] is False
@@ -1064,7 +1080,7 @@ def test_an_unfilled_mirror_is_never_trailed():
 
 
 def test_reaching_the_entry_marks_the_fill_and_then_trailing_starts():
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, None, True, None, 101.5, _recent(), None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, None, True, None, 101.5, _recent(), None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 100.0})
@@ -1075,7 +1091,7 @@ def test_reaching_the_entry_marks_the_fill_and_then_trailing_starts():
 def test_an_entry_never_reached_expires_instead_of_hanging():
     """A pending order must not sit in Cornix for days and fill unattended."""
     old = _recent(minutes_ago=bot.FILL_TIMEOUT_MIN + 5)
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, None, True, None, 101.5, old, None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, None, True, None, 101.5, old, None, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 101.4})
@@ -1086,7 +1102,7 @@ def test_an_entry_never_reached_expires_instead_of_hanging():
 def test_legacy_rows_without_a_mirror_price_stay_filled():
     """Rows written before this change carry no mirror_price. Declaring ~100 live
     positions unfilled on a suspicion would silence the whole channel."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, _recent(), None, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 10.0, True, None, None, _recent(), None, None)
     conn = FakeConn(mirrors=[row])
     assert bot.read_open_mirrors(conn)[42]["filled"] is True
 
@@ -1094,7 +1110,7 @@ def test_legacy_rows_without_a_mirror_price_stay_filled():
 def test_a_new_mirror_records_the_market_price_it_was_posted_at():
     """Wiring pin — without mirror_price the fill check cannot know which side the
     entry has to be reached from, and every new row would silently count as filled."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.5}) == 1
     ins = [p for s, p in conn.store["sql"] if s.startswith("INSERT INTO trailing_positions")][0]
@@ -1103,7 +1119,7 @@ def test_a_new_mirror_records_the_market_price_it_was_posted_at():
 
 def test_without_a_market_price_nothing_is_mirrored():
     """No mirror_price would mean no fill check — better to wait one poll."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={}) == 0
     assert conn.store["outbox"] == []
@@ -1119,7 +1135,7 @@ def test_without_a_market_price_nothing_is_mirrored():
 
 
 def test_the_mirror_enters_at_the_market_not_at_the_source_entry():
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG", entry=100.0)])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG", entry=100.0)])
     sources, _ = bot.read_source_signals(conn)
     assert sources[1]["entry"] == 100.0  # source geometry unchanged …
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.0}) == 1
@@ -1138,7 +1154,7 @@ def test_a_market_entry_counts_as_filled_immediately():
     """No fill wait for a market entry - the old wait is what produced the false
     ENTRY_NOT_FILLED cancellations (3 of 18 were wrong: the market HAD touched the
     entry, our 10s sampling just missed it while Cornix fills on any tick)."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     sources, _ = bot.read_source_signals(conn)
     bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.0})
     sql = [s for s, _ in conn.store["sql"] if s.startswith("INSERT INTO trailing_positions")][0]
@@ -1160,7 +1176,7 @@ def test_a_market_past_tp1_or_past_the_sl_is_not_mirrored():
 def test_the_guard_is_wired_into_the_mirror_path():
     """Wiring pin. mirrorable_at can be perfect on its own and still never be called —
     that failure mode has bitten this bot twice in one session."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])  # sl 95, tp1 110
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])  # sl 95, tp1 110
     sources, _ = bot.read_source_signals(conn)
     assert bot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 115.0}) == 0  # past TP1
     assert conn.store["outbox"] == []
@@ -1185,7 +1201,7 @@ def test_the_stop_is_recognised_in_both_directions():
 
 def test_a_stopped_out_mirror_books_the_exit_without_posting():
     """Cornix already closed it — a Close of ours is at best redundant."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, _recent(), 100.0, _recent(), 95.0, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 5.0, True, _recent(), 100.0, _recent(), 95.0, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 94.0})
@@ -1196,7 +1212,7 @@ def test_a_stopped_out_mirror_books_the_exit_without_posting():
 def test_the_trail_still_posts_its_own_close():
     """Contrast pin: an exit WE cause must still be published, or Cornix keeps the
     position open forever."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, _recent(), 100.0, _recent(), 95.0, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 10.0, True, _recent(), 100.0, _recent(), 95.0, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 108.9})
@@ -1240,7 +1256,7 @@ def test_a_row_without_a_stop_level_stays_null():
 def test_the_stop_out_books_that_mark_and_still_posts_nothing():
     """Wiring pin: the mark reaches the row, and the exit stays unpublished — Cornix
     closed it, so a Close of ours would claim an exit we did not cause."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 5.0, True, _recent(), 100.0, _recent(), 95.0, None)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 5.0, True, _recent(), 100.0, _recent(), 95.0, None)
     conn = FakeConn(mirrors=[row])
     mirrors = bot.read_open_mirrors(conn)
     bot.poll_open_mirrors(conn, {42: {"symbol": "BTCUSDT"}}, mirrors, prices={"BTCUSDT": 94.0})
@@ -1309,7 +1325,7 @@ def test_exposure_cap_off_admits_a_one_sided_book():
     """The very case bot 40 refuses (T-052 structural bound) must pass here —
     that difference IS the experiment."""
     lopsided = {"LONG": 200, "SHORT": 0}
-    admitted, rejected = freebot.admit([_cand(1, "AAAUSDT", "MIS1-72h", "LONG")], set(), 1000, open_by_dir=lopsided)
+    admitted, rejected = freebot.admit([_cand(1, "AAAUSDT", "BR4H", "LONG")], set(), 1000, open_by_dir=lopsided)
     assert [sid for sid, _ in admitted] == [1] and rejected == []
 
 
@@ -1317,7 +1333,7 @@ def test_one_position_per_symbol_holds_across_both_channels():
     """Operator decision 2026-08-08: 1× per symbol GLOBALLY. The second signal on
     a held symbol is refused even though the other channel could take it —
     double exposure on one coin is not what the unfiltered arm measures."""
-    admitted, rejected = freebot.admit([_cand(1, "BTCUSDT", "MIS1-72h", "LONG")], {"BTCUSDT"}, 1000)
+    admitted, rejected = freebot.admit([_cand(1, "BTCUSDT", "BR4H", "LONG")], {"BTCUSDT"}, 1000)
     assert admitted == [] and rejected[0][2] == "SYMBOL_HELD"
 
 
@@ -1357,7 +1373,7 @@ def test_assign_channels_balances_toward_the_emptier_channel():
     """The balancer: each entry goes to the channel with the fewest open
     positions, counts advancing per assignment — an even book alternates, a
     skewed book levels out first."""
-    admitted = [_cand(i, f"C{i}USDT", "MIS1-72h", "LONG") for i in range(4)]
+    admitted = [_cand(i, f"C{i}USDT", "BR4H", "LONG") for i in range(4)]
     placed = freebot.assign_channels(admitted, {CHANNEL_A: 0, CHANNEL_B: 0})
     assert [c for _sid, _sig, c in placed] == [CHANNEL_A, CHANNEL_B, CHANNEL_A, CHANNEL_B]
     placed = freebot.assign_channels(admitted, {CHANNEL_A: 3, CHANNEL_B: 0})
@@ -1366,7 +1382,7 @@ def test_assign_channels_balances_toward_the_emptier_channel():
 
 def test_assign_channels_single_channel_degenerates_to_bot_40():
     """With one channel the balancer must be a no-op — bot 40 unchanged."""
-    admitted = [_cand(i, f"C{i}USDT", "MIS1-72h", "LONG") for i in range(3)]
+    admitted = [_cand(i, f"C{i}USDT", "BR4H", "LONG") for i in range(3)]
     placed = bot.assign_channels(admitted, {CHANNEL: 7})
     assert [c for _sid, _sig, c in placed] == [CHANNEL, CHANNEL, CHANNEL]
 
@@ -1377,7 +1393,7 @@ def test_assign_channels_never_overfills_a_channel():
     exact remaining budget and no channel may exceed the Cornix bound."""
     open_by_channel = {CHANNEL_A: freebot.SLOT_CAP - 1, CHANNEL_B: freebot.SLOT_CAP - 3}
     free = sum(freebot.SLOT_CAP - n for n in open_by_channel.values())
-    admitted = [_cand(i, f"C{i}USDT", "MIS1-72h", "LONG") for i in range(free)]
+    admitted = [_cand(i, f"C{i}USDT", "BR4H", "LONG") for i in range(free)]
     counts = dict(open_by_channel)
     for _sid, _sig, c in freebot.assign_channels(admitted, open_by_channel):
         counts[c] += 1
@@ -1387,7 +1403,7 @@ def test_assign_channels_never_overfills_a_channel():
 def test_the_twin_outgrows_the_single_channel_cap():
     """600 open mirrors — past bot 40's 500 — and a fresh signal is still
     admitted: the budget is the SUM over both channels (~1000 seats)."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     mirrors = {
         10_000 + i: {"symbol": f"S{i}USDT", "direction": "LONG", "channel_id": (CHANNEL_A, CHANNEL_B)[i % 2]}
         for i in range(600)
@@ -1400,14 +1416,14 @@ def test_free_entry_posts_the_trailf_tag_and_records_its_channel():
     """One entry: the Cornix block carries the twin's own tag, both messages land
     in ONE channel (hard rule 4 per physical channel), and the row remembers
     that channel for the close."""
-    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "MIS1-72h", "LONG")])
+    conn = FakeConn(ai_signals=[_src_row(1, "BTCUSDT", "BR4H", "LONG")])
     sources, _ = freebot.read_source_signals(conn)
     assert freebot.open_mirrors(conn, sources, {}, set(), prices={"BTCUSDT": 101.0}) == 1
     assert len(conn.store["outbox"]) == 2  # cornix + info, nothing more
     assert {ch for ch, _m in conn.store["outbox"]} == {CHANNEL_A}  # empty book: tie → first
     cornix = [m for _ch, m in conn.store["outbox"] if m.startswith("📈")][0]
-    assert "MIS1-72h-TRAILF" in cornix, cornix
-    assert "MIS1-72h-TRAIL\n" not in cornix  # never the other arm's tag
+    assert "BR4H-TRAILF" in cornix, cornix
+    assert "BR4H-TRAIL\n" not in cornix  # never the other arm's tag
     ins = [p for s, p in conn.store["sql"] if s.startswith("INSERT INTO trailing_free_positions")][0]
     assert CHANNEL_A in ins, ins
 
@@ -1415,7 +1431,7 @@ def test_free_entry_posts_the_trailf_tag_and_records_its_channel():
 def test_the_close_goes_to_the_channel_the_entry_was_posted_in():
     """Cornix' `Close` acts symbol-wide PER CHANNEL — routed anywhere else it
     closes a different trade, or none."""
-    row = (7, 42, "BTCUSDT", "MIS1-72h", "LONG", 100.0, 10.0, True, None, None, None, None, CHANNEL_B)
+    row = (7, 42, "BTCUSDT", "BR4H", "LONG", 100.0, 10.0, True, None, None, None, None, CHANNEL_B)
     conn = FakeConn(mirrors=[row])
     mirrors = freebot.read_open_mirrors(conn)
     assert mirrors[42]["channel_id"] == CHANNEL_B
