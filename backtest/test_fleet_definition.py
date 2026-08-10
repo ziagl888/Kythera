@@ -89,6 +89,7 @@ def _load_dashboard():
 
 
 import core.fleet as fleet
+import core.shadow_scanners as shadow_scanners
 
 wd = _load_watchdog()
 dash = _load_dashboard()
@@ -139,10 +140,9 @@ EXPECTED_WATCHDOG_VIEW = [
     # bots behind FLEET (36-41 were added without growing it, so this test was
     # red the whole time and nobody noticed — backtest/ runs in no CI job).
     # Entries below restate what already ran in production, plus FIF2.
-    ("AI LIS1 Detector", "36_ai_lis1_bot.py", 239, None),
-    ("AI TSM1 Detector", "37_ai_tsm1_bot.py", 247, None),
-    ("AI SKW1 Detector", "38_ai_skw1_bot.py", 255, None),
-    ("AI XSM1 Detector", "39_ai_xsm1_bot.py", 263, None),
+    # T-2026-KYT-9050-133: bots 36-39 (delays 239/247/255/263) gave up their
+    # entries and now run inside "Shadow Scanner Runner" at the end of the list.
+    # The freed delays stay free — the surviving entries keep theirs.
     ("Trailing Close Bot", "40_trailing_close_bot.py", 271, None),
     ("Liq Collector", "41_liq_collector.py", 279, None),
     # ODS1 (T-2026-KYT-9050-106, PR #276) landed on main first; FIF2 reserved 291
@@ -157,6 +157,10 @@ EXPECTED_WATCHDOG_VIEW = [
     # extension, existing delays unchanged. Idle until KYTHERA_CANDLE_SNAPSHOT
     # is turned on.
     ("Candle Snapshot Service", "candle_snapshot_service.py", 307, None),
+    # T-2026-KYT-9050-133: one process for the four rule-based shadow scanners —
+    # deliberate fleet consolidation (4 entries out, 1 in), existing delays
+    # unchanged.
+    ("Shadow Scanner Runner", "45_shadow_scanner_runner.py", 311, None),
 ]
 
 # Groups rendered by the dashboard CSS (.group-core/.group-ai/.group-strategy/
@@ -212,3 +216,23 @@ def test_groups_are_dashboard_renderable():
 def test_scripts_are_unique():
     scripts = [p["script"] for p in fleet.FLEET]
     assert len(scripts) == len(set(scripts))
+
+
+# ── Hosted scanners: started by nobody, reaped by the watchdog ───────────────
+# T-2026-KYT-9050-133. The four scanner scripts live on as bots but not as
+# processes. Two properties have to hold together, and getting either wrong is a
+# money-path bug: listed in the fleet ⇒ started twice (once standalone, once by
+# the runner); missing from the orphan sweep ⇒ a survivor of the switchover
+# restart keeps scanning next to the runner.
+
+
+def test_hosted_scanners_are_not_started():
+    scripts = {p["script"] for p in fleet.FLEET}
+    for hosted in shadow_scanners.HOSTED_SCRIPTS:
+        assert hosted not in scripts, hosted
+    assert shadow_scanners.RUNNER_SCRIPT in scripts
+
+
+def test_hosted_scanners_stay_reapable_as_orphans():
+    for hosted in shadow_scanners.HOSTED_SCRIPTS:
+        assert hosted in wd.FLEET_SCRIPTS, hosted

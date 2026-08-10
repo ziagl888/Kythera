@@ -7,6 +7,12 @@
 # the SCRIPT (core/fleet.py FLEET minus control/parked markers). No central
 # tag→script mapping existed before this module.
 #
+# A script is not always a process (T-2026-KYT-9050-133): LIS/TSM/SKW/XSM/XSR
+# still map onto bots 36-39, but those four run inside 45_shadow_scanner_runner.py
+# instead of owning a fleet entry. The mapping deliberately keeps pointing at the
+# bot, because that is the unit reports and park markers speak about; only
+# active_scripts()/families_for_script() know about the hosting, see there.
+#
 # Matching is FAMILY-PREFIX based, not exact-tag based: model tags come from
 # artifact meta.model_id (OPUS-HANDOFF Falle 16) and rotate on every retrain
 # (ABR1→ABR2, RUB2→RUB3, …). A prefix keeps the mapping stable across
@@ -18,6 +24,7 @@ from __future__ import annotations
 from core.bot_naming import pretty_name
 from core.fleet import FLEET
 from core.process_control import list_parked
+from core.shadow_scanners import HOSTED_SCRIPTS, RUNNER_SCRIPT
 
 # Family prefix → emitting script. Order matters: longest prefix wins, so
 # "ABR…" must resolve to bot 18 before the "BR…" family of bot 7 can match.
@@ -132,6 +139,11 @@ def families_for_script(script: str) -> list[str]:
     is preserved for the AI side (matches _AI_FAMILY_TO_SCRIPT precedence);
     classic names are sorted since there is no precedence among them.
     """
+    if script == RUNNER_SCRIPT:
+        # The runner posts nothing itself; it drives the four hosted bots, so its
+        # families are theirs (T-2026-KYT-9050-133). Without this the only fleet
+        # entry that emits LIS/TSM/SKW/XSM/XSR would report no families at all.
+        return [family for hosted in HOSTED_SCRIPTS for family in families_for_script(hosted)]
     families = [prefix for prefix, s in _AI_FAMILY_TO_SCRIPT if s == script]
     classics = sorted(name for name, s in _CLASSIC_TO_SCRIPT.items() if s == script)
     return families + classics
@@ -144,9 +156,21 @@ def has_standard_leverage(tag: str | None) -> bool:
 
 
 def active_scripts() -> set[str]:
-    """Scripts that are part of the fleet AND not parked by the operator."""
+    """Scripts that are part of the fleet AND not parked by the operator.
+
+    The four scanners hosted by 45_shadow_scanner_runner.py (T-2026-KYT-9050-133)
+    have no fleet entry of their own anymore, but they still scan — so they
+    count as active exactly when the runner runs and their OWN park marker is
+    absent. That mirrors what the runner does before each scan, and it keeps the
+    report semantics of parking a single bot: without this expansion every
+    TSM1/SKW1/XSM1/XSR1 leg would silently fall into the "inactive" bucket of
+    23_market_tracker's realised report the moment the fleet switches over.
+    """
     parked = list_parked()
-    return {entry["script"] for entry in FLEET if entry["script"] not in parked}
+    active = {entry["script"] for entry in FLEET if entry["script"] not in parked}
+    if RUNNER_SCRIPT in active:
+        active |= {script for script in HOSTED_SCRIPTS if script not in parked}
+    return active
 
 
 def is_bot_active(tag: str | None, active: set[str] | None = None) -> bool:

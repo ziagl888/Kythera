@@ -15,6 +15,7 @@ import psutil
 from core.fleet import FLEET
 from core.health_monitor import run_health_checks
 from core.process_control import consume_restart, is_parked
+from core.shadow_scanners import HOSTED_SCRIPTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +46,19 @@ _dashboard_proc: subprocess.Popen | None = None
 # Basenames of all fleet scripts (bots + dashboard) — for orphan detection
 # (P0.2): a python process spawned by us carries one of these scripts in
 # its cmdline. If such a process runs without us as parent, it is orphaned.
-FLEET_SCRIPTS: frozenset = frozenset([os.path.basename(p["script"]) for p in PROCESSES_TO_RUN] + [DASHBOARD_SCRIPT])
+FLEET_SCRIPTS: frozenset = frozenset(
+    [os.path.basename(p["script"]) for p in PROCESSES_TO_RUN]
+    + [DASHBOARD_SCRIPT]
+    # Scripts we no longer START but must still be able to REAP
+    # (T-2026-KYT-9050-133): bots 36-39 moved into 45_shadow_scanner_runner.py.
+    # The switchover happens at a watchdog restart, and the four old processes
+    # are alive right up to that moment. Any of them that survives the tree stop
+    # as an orphan would keep scanning next to the runner — two schedulers on
+    # the same cooldown rows, i.e. a race for a duplicate LIVE post. They are
+    # deliberately NOT in PROCESSES_TO_RUN, so they are never started; this set
+    # is only read by the startup orphan sweep.
+    + [os.path.basename(s) for s in HOSTED_SCRIPTS]
+)
 
 # The watchdog itself — NOT in FLEET_SCRIPTS (no PROCESSES_TO_RUN entry).
 # For the mutex deadlock recovery (T-2026-CU-9050-127): a predecessor watchdog that
