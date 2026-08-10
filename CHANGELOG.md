@@ -1,3 +1,36 @@
+## [2026-08-11] The trailing roster, scored against the live book instead of against itself (T-2026-KYT-9050-134)
+
+The roster in `core/trailing_roster.py` ranks legs by **density** — net result per occupied
+slot-day — because PR #198 treated the 500 Cornix seats as the binding constraint. That premise is
+measurable and it is false: occupancy peaks at 233 against 500 seats for bot 40 and 1000 for bot 44,
+and T-129 records the same ("the cap has never bound"). Under free seats a leg that earns little per
+slot-day but earns it often displaces nothing. `tools/trailing_roster_rerank.py` (new) therefore
+ranks by absolute net contribution and keeps density as the secondary column. **Read-only, no live
+effect** — seat changes remain an operator decision.
+
+* **The replay overstates the live arm on every leg it can be checked against.** Re-running
+  `trailing_slot_budget.py` on the live window and calibrating against `trailing_positions` gives
+  `live = -0.197 + 0.272 * replay` (R2 0.61), overstated in **17 of 19** legs, median error
+  -0.63 pp per trade. Because the same-window run reproduces the bias, it is a **model gap, not a
+  regime change**: the replay simulates a trailing exit and otherwise lets a trade run to its
+  recorded close, with no stop-loss and no time-stop, while live those are ~14 % of exits at ~-2.6 %.
+* **The premise the task started from does not survive.** The four legs PR #198 rejected on density
+  (EPD3 LONG, BB_1H LONG, BR2H LONG, TSM1 SHORT) are net-POSITIVE in raw replay output and
+  net-NEGATIVE once corrected — EPD3 SHORT, never measured before because it went live after the
+  2026-07-26 run, projects to -1281 %-points over the window. They were kept out for a stated reason
+  that was wrong and an outcome that was right.
+* **The real finding points the other way:** nine *rostered* legs lose money on live evidence,
+  -661 %-points combined, led by ATS2 LONG (-261 over 448 live trades) and FIF2 (-234 across both
+  directions). **None clears |t| > 2**, so this is a watchlist and not a retirement list — acting on
+  a two-week book is the error the tool was built to catch. Re-check once the book is deeper.
+* **Two guards, both from live near-misses.** A slot-budget report scores its `legs` block at its own
+  selected `chosen_act`; the live-window re-run picked 0.0 where the original picked 2.0, and at 0.0
+  the trail is the micro-scalper pinned in `test_trailing_slot_budget` (median hold 0.42h against
+  5.58h). A mismatch is now refused outright. Second, live evidence always outranks the fitted
+  correction: the regression pulls toward the mean and would otherwise have put AIM2 SHORT — retired
+  by T-129 for losing money, 480 live trades at -0.511 — back near the top of a seat recommendation.
+* **Pins:** `backtest/test_trailing_roster_rerank.py`, 13 checks, DB-free.
+
 ## [2026-08-10] Shared candle-snapshot service — "fetch once, serve many" for the nine hourly scanners (T-2026-KYT-9050-132)
 
 Bots 7, 11, 12, 13, 14, 18, 24, 25 and 34 walk the same ~523 coins at staggered minutes and read

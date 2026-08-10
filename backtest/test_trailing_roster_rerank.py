@@ -110,6 +110,40 @@ def test_scores_rank_by_corrected_total_not_per_trade():
     assert abs(scores[1].corrected_total - 50.0) < 1e-9
 
 
+def test_live_evidence_beats_the_fitted_correction():
+    """A leg with real live trades must be scored on them, never on the regression line.
+
+    This is the AIM2 SHORT case: 480 live trades at -0.511, but the fit predicts +0.149
+    because a regression pulls everything toward the mean. Ranking on the fitted value
+    would have recommended a seat for a leg T-129 retired for losing money.
+    """
+    replay = {"LOSER SHORT": {"per_trade_trail_net": 1.295, "n": 738}}
+    live = {"LOSER SHORT": (480, -0.411)}  # gross; net = -0.511 after FEE
+    # a fit that would otherwise rehabilitate it
+    fitted = {f"C{i} LONG": {"per_trade_trail_net": float(i)} for i in range(1, 6)}
+    fitted_live = {f"C{i} LONG": (100, 0.2 * i + FEE) for i in range(1, 6)}
+    cal = calibrate(fitted, fitted_live, FEE)
+    assert cal is not None and cal.predict(1.295) > 0, "precondition: fit must be optimistic here"
+
+    scores = score_legs(replay, cal, set(), live, FEE)
+    s = scores[0]
+    assert s.basis == "live", f"expected live basis, got {s.basis}"
+    assert abs(s.effective_per_trade - (-0.511)) < 1e-9, s.effective_per_trade
+    assert s.corrected_total < 0, "a live-losing leg must not rank positive"
+
+
+def test_thin_live_coverage_falls_back_to_the_fit():
+    """Below the floor the live mean is noise, so the fitted value is the better estimate."""
+    replay = {"X LONG": {"per_trade_trail_net": 2.0, "n": 50}}
+    live = {"X LONG": (3, 40.0)}  # 3 trades, absurd mean
+    fitted = {f"C{i} LONG": {"per_trade_trail_net": float(i)} for i in range(1, 6)}
+    fitted_live = {f"C{i} LONG": (100, 0.5 * i + FEE) for i in range(1, 6)}
+    cal = calibrate(fitted, fitted_live, FEE)
+    scores = score_legs(replay, cal, set(), live, FEE)
+    assert scores[0].basis == "fitted", "3 live trades must not outweigh the fit"
+    assert abs(scores[0].effective_per_trade - cal.predict(2.0)) < 1e-9
+
+
 def test_uncalibrated_scores_fall_back_to_raw():
     replay = {"A LONG": {"per_trade_trail_net": 1.25, "n": 10}}
     scores = score_legs(replay, None, set(), {}, FEE)

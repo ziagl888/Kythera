@@ -204,11 +204,50 @@ class LegScore:
     rostered: bool
     live_n: int
     live_per_trade: float | None
+    live_sd: float = 0.0
+    min_live_n: int = MIN_LIVE_N
+
+    @property
+    def live_t(self) -> float | None:
+        """t of the live per-trade mean against zero — is the sign real or a fortnight?
+
+        Trades within a leg are not independent (one tape, overlapping windows), so this
+        overstates confidence and is a screening number, not a p-value. It still separates
+        ATS2 LONG at 448 trades from a leg that had six bad ones.
+        """
+        if self.live_per_trade is None or self.live_n < 2 or self.live_sd <= 0:
+            return None
+        return self.live_per_trade / (self.live_sd / self.live_n**0.5)
+
+    @property
+    def measured(self) -> bool:
+        """Does this leg have enough live trades to speak for itself?"""
+        return self.live_per_trade is not None and self.live_n >= self.min_live_n
+
+    @property
+    def effective_per_trade(self) -> float:
+        """What the leg is expected to earn — measured where possible, fitted otherwise.
+
+        A fitted value must never overwrite a measured one. The fit is a regression line,
+        so it pulls every leg toward the middle: AIM2 SHORT predicts +0.149 through the
+        correction while its own 480 live trades say -0.511. Ranking on the fitted number
+        would put a leg T-2026-KYT-9050-129 retired for losing money back near the top of
+        a seat recommendation. Live data wins wherever it exists; the fit is only for legs
+        that have none.
+        """
+        if self.measured:
+            assert self.live_per_trade is not None  # narrowed by `measured`
+            return self.live_per_trade
+        return self.corrected_per_trade
+
+    @property
+    def basis(self) -> str:
+        return "live" if self.measured else "fitted"
 
     @property
     def corrected_total(self) -> float:
-        """Net contribution over the replay's own trade count, at the corrected rate."""
-        return self.corrected_per_trade * self.n
+        """Net contribution over the replay's own trade count, at the effective rate."""
+        return self.effective_per_trade * self.n
 
 
 def score_legs(
@@ -217,6 +256,7 @@ def score_legs(
     rostered: set[str],
     live: dict[str, tuple[int, float]],
     fee: float,
+    min_live_n: int = MIN_LIVE_N,
 ) -> list[LegScore]:
     """Score every measured leg; corrected value falls back to raw when uncalibrated."""
     out: list[LegScore] = []
@@ -240,6 +280,9 @@ def score_legs(
                 rostered=nk in rostered,
                 live_n=hit[0] if hit else 0,
                 live_per_trade=(hit[1] - fee) if hit else None,
+                # tolerate a 2-tuple: callers that only have (n, mean) still work
+                live_sd=float(hit[2]) if hit and len(hit) > 2 else 0.0,
+                min_live_n=min_live_n,
             )
         )
     out.sort(key=lambda s: -s.corrected_total)
@@ -253,27 +296,26 @@ def load_rostered() -> set[str]:
 
 
 def fetch_live_book(start: str = LIVE_START) -> dict[str, tuple[int, float]]:
-    """Per-leg (n, mean gross mark %) from the live trailing book. SELECT only."""
-    import psycopg2
-    from dotenv import load_dotenv
+    """Per-leg (n, mean gross mark %) from the live trailing book. SELECT only.
 
-    load_dotenv(os.path.join(REPO_ROOT, ".env"))
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        options="-c timezone=UTC -c statement_timeout=180000",
-    )
+    Goes through ``core.database`` rather than building its own psycopg2 connection:
+    that is where the credentials come from (``core.config`` calls ``load_dotenv()``
+    with no path, so the .env is found by walking UP — which is what makes this work
+    from a worktree, where no .env of its own exists).
+    """
+    from core.database import get_db_connection
+
+    conn = get_db_connection()
     try:
-        conn.set_session(readonly=True)
         with conn.cursor() as cur:
             # entry > 0 is not decoration: a zero entry yields a NaN-ish mark that the
             # column's own guards let through (T-2026-KYT-9050-114).
+            # STDDEV alongside the mean: a retirement recommendation on a mean without
+            # its spread is exactly the error this task exists to correct. The t below
+            # is what separates "this leg loses" from "this leg had a bad fortnight".
             cur.execute(
                 """
-                SELECT model, direction, COUNT(*), AVG(close_mark_pct)
+                SELECT model, direction, COUNT(*), AVG(close_mark_pct), STDDEV_SAMP(close_mark_pct)
                 FROM trailing_positions
                 WHERE posted AND closed_at IS NOT NULL AND close_mark_pct IS NOT NULL
                   AND entry > 0 AND opened_at >= %s
@@ -281,7 +323,10 @@ def fetch_live_book(start: str = LIVE_START) -> dict[str, tuple[int, float]]:
                 """,
                 (start,),
             )
-            return {normalise_leg(f"{m} {d}"): (int(n), float(a)) for m, d, n, a in cur.fetchall()}
+            return {
+                normalise_leg(f"{m} {d}"): (int(n), float(a), float(sd) if sd is not None else 0.0)
+                for m, d, n, a, sd in cur.fetchall()
+            }
     finally:
         conn.close()
 
@@ -290,8 +335,28 @@ def render(scores: list[LegScore], cal: Calibration | None, meta: dict) -> str:
     lines: list[str] = []
     lines.append("# Trailing roster re-rank — T-2026-KYT-9050-134\n")
     lines.append(
-        f"Replay `{meta['replay_file']}` (window from {meta['replay_start']}, generated "
-        f"{meta['replay_generated']}) scored against the live book from {meta['live_start']}.\n"
+        f"Replay `{os.path.basename(meta['replay_file'])}` (window from {meta['replay_start']}, "
+        f"generated {meta['replay_generated']}) scored against the live book from "
+        f"{meta['live_start']}. Calibration: {meta['calibration']}.\n"
+    )
+
+    # Verdict first: the numbers below are long, and the one thing a reader must not
+    # miss is that nothing here clears the bar for acting on it.
+    drags_pre = [s for s in scores if s.rostered and s.measured and s.corrected_total < 0]
+    cands_pre = [s for s in scores if not s.rostered and not s.thin and s.effective_per_trade > 0]
+    strong_pre = [s for s in drags_pre if (s.live_t or 0) < -2]
+    lines.append("\n## Verdict\n")
+    lines.append(
+        f"\n**No seat changes are recommended on this evidence.**\n\n"
+        f"- The premise the task started from does not survive: every unrostered leg with a positive "
+        f"expected contribution ({len(cands_pre)} of them) is **fitted, not measured** — none has live "
+        f"trades. The largest is worth {max((s.corrected_total for s in cands_pre), default=0):+.0f} "
+        f"%-points. The legs PR #198 rejected on density turn out net-NEGATIVE once corrected, so the "
+        f"roster kept them out for a stated reason that was wrong and an outcome that was right.\n"
+        f"- The real finding points the other way: **{len(drags_pre)} rostered legs lose money on live "
+        f"evidence**, {sum(s.corrected_total for s in drags_pre):+.0f} %-points combined.\n"
+        f"- But **{len(strong_pre)} of them clear |t| > 2**. On a two-week book that is a watchlist, "
+        f"not a retirement list. Acting on it now would repeat the error this tool was built to catch.\n"
     )
 
     lines.append("\n## Calibration — does the replay predict the live arm?\n")
@@ -309,23 +374,28 @@ def render(scores: list[LegScore], cal: Calibration | None, meta: dict) -> str:
         for key, pred, real in sorted(cal.points, key=lambda p: -p[1]):
             lines.append(f"| {key} | {pred:+.3f} | {real:+.3f} | {real - pred:+.3f} | {meta['live_n'].get(key, 0)} |\n")
 
-    lines.append("\n## Ranking by corrected net contribution\n")
+    lines.append("\n## Ranking by expected net contribution\n")
     lines.append(
-        "\nPrimary column is absolute contribution (corrected per-trade x replay trade count), "
+        "\nPrimary column is absolute contribution (effective per-trade x replay trade count), "
         "because the seat cap provably never binds. Density is retained as the PR #198 measure.\n"
+        f"\n`basis` says where the per-trade number comes from: **live** for legs with >= {MIN_LIVE_N} "
+        "trades in the real book, **fitted** for legs that have none and must be extrapolated through "
+        "the calibration line. A fitted value never overrides a measured one — the fit regresses toward "
+        "the mean and would otherwise rehabilitate legs the live book has already convicted.\n"
     )
     lines.append(
-        "\n| leg | roster | n | replay/trade | corrected/trade | corrected total | density | occ p95 | live n |\n"
-        "|---|:--:|---:|---:|---:|---:|---:|---:|---:|\n"
+        "\n| leg | roster | basis | n | replay/trade | effective/trade | total | density | occ p95 | live n |\n"
+        "|---|:--:|:--:|---:|---:|---:|---:|---:|---:|---:|\n"
     )
     for s in scores:
         flag = "YES" if s.rostered else ("thin" if s.thin else "-")
         lines.append(
-            f"| {s.key} | {flag} | {s.n} | {s.replay_per_trade:+.3f} | {s.corrected_per_trade:+.3f} | "
-            f"{s.corrected_total:+.0f} | {s.density:.3f} | {s.occ_p95:.0f} | {s.live_n or ''} |\n"
+            f"| {s.key} | {flag} | {s.basis} | {s.n} | {s.replay_per_trade:+.3f} | "
+            f"{s.effective_per_trade:+.3f} | {s.corrected_total:+.0f} | {s.density:.3f} | "
+            f"{s.occ_p95:.0f} | {s.live_n or ''} |\n"
         )
 
-    unrostered_positive = [s for s in scores if not s.rostered and not s.thin and s.corrected_per_trade > 0]
+    unrostered_positive = [s for s in scores if not s.rostered and not s.thin and s.effective_per_trade > 0]
     lines.append("\n## Candidates — unrostered legs that survive the correction\n")
     if not unrostered_positive:
         lines.append(
@@ -336,11 +406,44 @@ def render(scores: list[LegScore], cal: Calibration | None, meta: dict) -> str:
         )
     else:
         for s in unrostered_positive:
-            lines.append(
-                f"\n- **{s.key}** — corrected {s.corrected_per_trade:+.3f} %/trade over {s.n} replay "
-                f"trades ({s.corrected_total:+.0f} % total), density {s.density:.3f}, p95 occupancy "
-                f"{s.occ_p95:.0f} seats. No live coverage: this is an extrapolation of the fit.\n"
+            evidence = (
+                f"measured on {s.live_n} live trades"
+                if s.measured
+                else "NO live coverage — the fit extrapolated beyond its support"
             )
+            lines.append(
+                f"\n- **{s.key}** — {s.effective_per_trade:+.3f} %/trade ({s.basis}) over {s.n} replay "
+                f"trades ({s.corrected_total:+.0f} % total), density {s.density:.3f}, p95 occupancy "
+                f"{s.occ_p95:.0f} seats. {evidence}.\n"
+            )
+
+    drags = [s for s in scores if s.rostered and s.measured and s.corrected_total < 0]
+    drags.sort(key=lambda s: s.corrected_total)
+    lines.append("\n## Rostered legs that lose money on live evidence\n")
+    if not drags:
+        lines.append("\nNone — every seated leg is net-positive in the live book.\n")
+    else:
+        lines.append(
+            "\nThese are **measured, not extrapolated**: each has live trades past the floor. "
+            "This is where the roster is actually wrong, and it is the opposite of the question "
+            "the task started from.\n\n"
+            "| leg | n | live/trade | t | total | live n |\n|---|---:|---:|---:|---:|---:|\n"
+        )
+        for s in drags:
+            t = s.live_t
+            t_cell = f"{t:+.2f}" if t is not None else "n/a"
+            lines.append(
+                f"| {s.key} | {s.n} | {s.effective_per_trade:+.3f} | "
+                f"{t_cell} | {s.corrected_total:+.0f} | {s.live_n} |\n"
+            )
+        total = sum(s.corrected_total for s in drags)
+        strong = [s for s in drags if (s.live_t or 0) < -2]
+        lines.append(
+            f"\nCombined drag **{total:+.0f} %-points** over the window. Of these, "
+            f"**{len(strong)}** clear |t| > 2 on their own book: "
+            f"{', '.join(s.key for s in strong) if strong else 'none'}. The rest are directionally "
+            "negative but within noise for this window and should be re-checked rather than acted on.\n"
+        )
 
     lines.append("\n## Limits\n")
     lines.append(
