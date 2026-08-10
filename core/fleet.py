@@ -297,38 +297,12 @@ FLEET: list[dict[str, Any]] = [
         "restart_interval": None,
     },
     # ── Rule-based shadow forwarder (studies K1/K2/K5/K7, T-2026-CU-9050-149) ─
-    # Pure shadow bots (no live post): validate negative/weak study
-    # signals live via monitored, never-posted trades. New entry only
-    # supervised after watchdog restart (FLEET read at watchdog import) ⇒
-    # operator gate; below 100% CPU first check capacity (restart incident 07-15).
-    {
-        "name": "AI LIS1 Detector",
-        "script": "36_ai_lis1_bot.py",
-        "group": "ai",
-        "start_delay": 239,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI TSM1 Detector",
-        "script": "37_ai_tsm1_bot.py",
-        "group": "ai",
-        "start_delay": 247,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI SKW1 Detector",
-        "script": "38_ai_skw1_bot.py",
-        "group": "ai",
-        "start_delay": 255,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI XSM1 Detector",
-        "script": "39_ai_xsm1_bot.py",
-        "group": "ai",
-        "start_delay": 263,
-        "restart_interval": None,
-    },
+    # The four scanners (36 LIS1 / 37 TSM1 / 38 SKW1 / 39 XSM1) used to hold an
+    # entry each at delays 239/247/255/263. Since T-2026-KYT-9050-133 they share
+    # ONE process — see "Shadow Scanner Runner" at the end of this list. Their
+    # script names live on as bot identity (report mapping in core/bot_catalog.py,
+    # park markers control/parked/<script>.py), they just no longer own a
+    # process; the freed delays stay free.
     # ── Trailing-close arm in own channel (T-2026-KYT-9050-042 phase C) ───
     # No detector: mirrors the 33 roster legs (core/trailing_roster.py)
     # in CH_TRAILING and closes them via trailing close — the A/B arm against
@@ -427,6 +401,24 @@ FLEET: list[dict[str, Any]] = [
         "script": "candle_snapshot_service.py",
         "group": "core",
         "start_delay": 307,
+        "restart_interval": None,
+    },
+    # ── Shared shadow-scanner runner (T-2026-KYT-9050-133) ────────────────────
+    # Replaces the four entries of bots 36-39 above: four permanent interpreters
+    # (each with its own pandas/numpy import and minconn-2 pool) for a few
+    # minutes of work per week become one process that calls their unchanged
+    # run_scan() on their unchanged schedules (core/shadow_scanners.py). Per-bot
+    # error isolation and the four original park markers stay intact; the bot
+    # modules themselves are untouched. group="ai" like the four bots it hosts.
+    # Last in the list with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py). Effective only after a watchdog
+    # restart (FLEET read at watchdog import) ⇒ operator gate; until then bots
+    # 36-39 keep running from the old constellation.
+    {
+        "name": "Shadow Scanner Runner",
+        "script": "45_shadow_scanner_runner.py",
+        "group": "ai",
+        "start_delay": 311,
         "restart_interval": None,
     },
 ]

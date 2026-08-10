@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import core.bot_catalog as bc  # noqa: E402
 from core.fleet import FLEET  # noqa: E402
+from core.shadow_scanners import HOSTED_SCRIPTS  # noqa: E402
 
 # ── AI family mapping ─────────────────────────────────────────────────────────
 
@@ -95,10 +96,13 @@ def test_mis_pump_dump_and_typo_variants_normalise_first():
 
 
 def test_mapped_scripts_exist_in_fleet():
-    fleet_scripts = {e["script"] for e in FLEET}
+    # A mapped script must be one the fleet actually runs — either as its own
+    # process, or (since T-2026-KYT-9050-133) hosted inside the shadow-scanner
+    # runner. Anything else is a tag pointing at a bot nobody executes.
+    runnable = {e["script"] for e in FLEET} | set(HOSTED_SCRIPTS)
     mapped = {script for _prefix, script in bc._AI_FAMILY_TO_SCRIPT}
     mapped |= set(bc._CLASSIC_TO_SCRIPT.values())
-    assert mapped <= fleet_scripts, f"catalog points at non-fleet scripts: {mapped - fleet_scripts}"
+    assert mapped <= runnable, f"catalog points at scripts nobody runs: {mapped - runnable}"
 
 
 # ── Classic strategy names ────────────────────────────────────────────────────
@@ -147,7 +151,9 @@ def test_active_scripts_excludes_parked():
         active = bc.active_scripts()
     assert "13_ai_rub_bot.py" not in active
     assert "11_ai_mis_bot.py" in active
-    assert len(active) == len(FLEET) - 1
+    # One fleet entry parked, plus the four scanners the runner hosts — they
+    # have no fleet entry of their own since T-2026-KYT-9050-133 but do scan.
+    assert len(active) == len(FLEET) - 1 + len(HOSTED_SCRIPTS)
 
 
 def test_is_bot_active_respects_parking_and_mapping():
