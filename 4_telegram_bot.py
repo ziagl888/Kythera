@@ -6,7 +6,7 @@ import time
 import warnings
 
 from telegram import Bot
-from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
+from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError, TimedOut
 
 # Suppress Pandas warning (in case it appears here)
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
@@ -20,6 +20,36 @@ logger = logging.getLogger(__name__)
 
 # --- CONSTANTS ---
 MAX_ATTEMPTS = 3  # After 3 failed attempts a message is marked as "failed"
+
+#: BadRequest reasons no retry can ever fix, matched case-insensitively against
+#: the error text — python-telegram-bot exposes no machine-readable code for them.
+#:
+#: Deliberately an ALLOWLIST and not "every BadRequest": a malformed-HTML
+#: rejection ("Can't parse entities …") is genuinely retryable here, because
+#: P2.11 drops ``parse_mode`` on the last attempt and that recovery path must
+#: survive. Terminating on every 400 would be the same misclassification as
+#: today's, only in the other direction.
+#:
+#: Evidenced in ``telegram_outbox`` at the time of writing: "Message is too long"
+#: 492 rows, "Chat not found" 428. "Message text is empty" was NOT observed and is
+#: listed only because it is unambiguously permanent. The retryable counterpart
+#: sits right next to them in the same table — "Can't parse entities" with 61 rows,
+#: which is exactly what P2.11 recovers from and what this list must never swallow.
+#: No caption variant ("caption is too long") appears in the data, so none is
+#: guessed at here; add one when it shows up, not before.
+PERMANENT_BAD_REQUEST_REASONS = (
+    "message is too long",
+    "message text is empty",
+    "chat not found",
+)
+
+#: The subset of the above that condemns the whole CHANNEL, not just the message.
+#: If the chat does not exist, every other message queued for it will fail the same
+#: way, so the channel is skipped for the rest of the poll cycle (P1.3) — which is
+#: exactly what the pre-existing, unreachable ``TelegramError`` handler below did.
+#: "Message is too long" is deliberately NOT here: that is a property of the one
+#: message, and blocking its channel would punish the queue behind it.
+CHANNEL_LEVEL_BAD_REQUEST_REASONS = ("chat not found",)
 FETCH_BATCH_SIZE = 50  # Max messages per DB roundtrip
 IDLE_SLEEP_SEC = 5  # Loop delay when outbox is empty
 
@@ -261,6 +291,42 @@ def mark_sent(cur, msg_id: int, image_path: str | None) -> None:
     """Marks message as sent and deletes the chart only if no other unsent
     entries still need the file."""
     cur.execute("UPDATE telegram_outbox SET sent = TRUE, status = 'sent' WHERE id = %s", (msg_id,))
+    try_delete_chart_if_unreferenced(cur, image_path, msg_id)
+
+
+def is_permanent_bad_request(reason: str) -> bool:
+    """True if a BadRequest text is on the permanent allowlist — pure, no IO."""
+    lowered = (reason or "").lower()
+    return any(marker in lowered for marker in PERMANENT_BAD_REQUEST_REASONS)
+
+
+def is_channel_level_bad_request(reason: str) -> bool:
+    """True if the rejection condemns the channel, not just this message."""
+    lowered = (reason or "").lower()
+    return any(marker in lowered for marker in CHANNEL_LEVEL_BAD_REQUEST_REASONS)
+
+
+def mark_failed_permanently(cur, msg_id: int, error: str, image_path: str | None) -> None:
+    """Terminal failure on the FIRST attempt, for errors no retry can fix.
+
+    ``mark_failure`` only gives up after ``MAX_ATTEMPTS`` — right for an unknown
+    or transient outcome. A permanently rejected message has a KNOWN outcome
+    (Telegram refused it), so further attempts buy nothing and cost a send slot
+    each, plus a ``failed_channels`` entry that stalls the channel for the rest
+    of the poll cycle.
+    """
+    cur.execute(
+        """
+        UPDATE telegram_outbox
+        SET attempts = attempts + 1,
+            last_error = %s,
+            failed = TRUE,
+            status = 'failed',
+            sending_at = NULL
+        WHERE id = %s
+        """,
+        (error[:1000], msg_id),
+    )
     try_delete_chart_if_unreferenced(cur, image_path, msg_id)
 
 
@@ -509,6 +575,45 @@ async def process_outbox():
                             )
 
                         except NetworkError as e:
+                            # PERMANENT 400s first. In python-telegram-bot
+                            # BadRequest is a NetworkError SUBCLASS (22.5:
+                            # BadRequest -> NetworkError -> TelegramError), so
+                            # this clause already catches them and the terminal
+                            # `except TelegramError` below never sees one. Before
+                            # this check every 400 was treated as "unknown
+                            # outcome" and retried MAX_ATTEMPTS times; for a
+                            # permanently undeliverable message each retry also
+                            # entered failed_channels — stalling that channel for
+                            # the rest of the poll cycle — and burned a global
+                            # send slot, delaying OTHER channels' messages toward
+                            # the P1.1 15-minute expiry.
+                            #
+                            # Handled here rather than in an earlier `except
+                            # BadRequest` clause on purpose: a non-permanent 400
+                            # must fall through to the unknown-outcome path, and
+                            # a bare `raise` in a sibling clause would leave the
+                            # try block entirely instead of reaching it.
+                            if isinstance(e, BadRequest) and is_permanent_bad_request(str(e)):
+                                mark_failed_permanently(cur, msg_id, f"BadRequest (permanent): {e}", image_path)
+                                conn.commit()
+                                # The request DID reach Telegram and was refused,
+                                # so the rate-limit budget is honestly spent —
+                                # once, not three times.
+                                now_after = time.time() * 1000
+                                last_send_per_channel[channel_id] = now_after
+                                last_global_send_ms = now_after
+                                # Blocking the channel is a per-reason decision.
+                                # A too-long message says nothing about the next
+                                # one, so its channel keeps its turn; a missing
+                                # chat condemns every message queued behind it.
+                                if is_channel_level_bad_request(str(e)):
+                                    failed_channels.add(channel_id)  # P1.3
+                                logger.error(
+                                    f"❌ Msg {msg_id} to channel {channel_id} permanently "
+                                    f"rejected ({e}) — failed without retry."
+                                )
+                                continue
+
                             # Review hardening P0.1(d): non-TimedOut transport errors
                             # (httpx ReadError/RemoteProtocolError = connection reset AFTER
                             # possible request receipt at Telegram) are also UNKNOWN
