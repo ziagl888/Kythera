@@ -404,6 +404,17 @@ def render(scores: list[LegScore], cal: Calibration | None, meta: dict) -> str:
 
     unrostered_positive = [s for s in scores if not s.rostered and not s.thin and s.effective_per_trade > 0]
     lines.append("\n## Candidates — unrostered legs that survive the correction\n")
+    # The task asked for a candidate list "for the free arm (bot 44), whose empty seats can take
+    # the density-weak but profitable legs". That premise does not hold and saying so is part of
+    # the answer: bot 44 has no seats of its own to fill.
+    lines.append(
+        "\n**There is no separate bot-44 list, and there cannot be one.** Both arms run the same "
+        "`ROSTER` from `core.trailing_roster` — `TRAILING_BOT_PROFILE` switches the exposure cap and "
+        "the channels, not the seat register (`40_trailing_close_bot.py`, profile block). A leg is "
+        "seated in both arms or in neither, so the free arm's spare capacity cannot be filled "
+        "independently of bot 40. The list below is therefore the candidate list for the roster as a "
+        "whole; admitting any of these legs would seat them in both arms at once.\n"
+    )
     if not unrostered_positive:
         lines.append(
             "\n**None.** Every unrostered leg turns net-negative once the replay is corrected against "
