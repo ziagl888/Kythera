@@ -128,7 +128,9 @@ statements (~87 %, ~88 %, ~93 %) and the pre-registered rules in §3.2 are unaff
 > 25: 4 216, rest unchanged ≈ 4 633), and with `KYTHERA_CANDLE_SNAPSHOT=1` (1h store) to ≈ 3 600/h;
 > adding `4h` (D0) then mainly serves bot 25's remaining 4h leg (~2 100/h at the new cadence). The D2 DEFER logic and the §3.2 thresholds are
 > unaffected — M1 measures duration, not cadence — but the *urgency* of D0 and of the engine both
-> drop accordingly.
+> drop accordingly. C1 (`≤ 180 s`) and C3 (`20·S_c`) still encode the old cadence numerically; after
+> the downshift they are conservative bounds (real: 900 s / ×4), which can only push the verdict
+> towards DEFER/shards, never into a false yes — a D2 session should restate them at ×4.
 
 | Bot | Reads/hour | Timeframes |
 |---|---|---|
