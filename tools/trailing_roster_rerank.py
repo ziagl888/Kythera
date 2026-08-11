@@ -13,9 +13,11 @@ only deserves one if it out-earns the leg it displaces. That premise is measurab
 it is false. Occupancy peaks at 233 against a ``SLOT_CAP`` of 500 for bot 40 and 1000
 for bot 44 (two channels, T-2026-KYT-9050-117); T-2026-KYT-9050-129 states the same
 ("the cap has never bound"). When seats are free, a leg that earns little per slot-day
-but earns it on many trades is additive — it displaces nothing. The replay rejected four
-legs that are net-positive per trade purely on density: EPD3 LONG (+0.168 %),
-BB_1H LONG (+0.566 %), BR2H LONG (+0.352 %), TSM1 SHORT (+0.036 %).
+but earns it on many trades is additive — it displaces nothing. The 2026-07-26 replay
+rejected four legs that were net-positive per trade purely on density: EPD3 LONG
+(+0.168 %), BB_1H LONG (+0.566 %), BR2H LONG (+0.352 %), TSM1 SHORT (+0.036 %). Only
+three of those can be re-tested here: **BB_1H produces no trades at all in the live
+window**, so nothing this tool reports says anything about it either way.
 
 So this tool reports **absolute net contribution** as the primary column and keeps
 density as the secondary one — the reverse of PR #198 — and says so where it matters.
@@ -24,10 +26,10 @@ But the replay's own numbers need calibrating first
 ---------------------------------------------------
 The decisive check is not "which ranking is prettier", it is whether the replay predicts
 what the arm actually earns. Against the live book (``trailing_positions``, both net of
-the same fee) the 2026-07-26 replay **overstates every single leg it has live coverage
-for** — 16 of 16, median error -0.73 pp, mean -1.17 pp, correlation 0.611. A candidate
-list drawn from uncorrected replay values is therefore worthless: applying the median
-error alone flips all four rejected legs negative.
+the same fee) the replay **overstates nearly every leg it has live coverage for** — 17 of
+19 on the same-window run, median error -0.63 pp, slope 0.27. A candidate list drawn from
+uncorrected replay values is therefore worthless: the correction alone flips every
+density-rejected leg negative.
 
 That error has two possible sources and they carry opposite conclusions:
 
@@ -79,6 +81,11 @@ DEFAULT_REPLAY = "staging_models/replay/trailing_slot_budget_live.json"
 DEFAULT_OUT = "staging_models/replay"
 MIN_LIVE_N = 30  # live trades a leg needs before it may inform the calibration
 LIVE_START = "2026-07-26"  # first day of the live trailing book
+
+# (n, mean gross mark %) or (n, mean, stddev). The two-element form is what a caller with
+# only a mean can pass; the scorer reads the third element when it is there and falls back
+# to no spread when it is not, so both stay legal rather than one being a silent truncation.
+LiveLeg = tuple[int, float] | tuple[int, float, float]
 
 
 class ActivationMismatch(RuntimeError):
@@ -139,7 +146,7 @@ def normalise_leg(key: str) -> str:
 
 def calibrate(
     replay_legs: dict[str, dict],
-    live: dict[str, tuple[int, float]],
+    live: dict[str, LiveLeg],
     fee: float,
     min_live_n: int = MIN_LIVE_N,
 ) -> Calibration | None:
@@ -254,7 +261,7 @@ def score_legs(
     replay_legs: dict[str, dict],
     cal: Calibration | None,
     rostered: set[str],
-    live: dict[str, tuple[int, float]],
+    live: dict[str, LiveLeg],
     fee: float,
     min_live_n: int = MIN_LIVE_N,
 ) -> list[LegScore]:
@@ -295,7 +302,7 @@ def load_rostered() -> set[str]:
     return {normalise_leg(f"{tag} {direction}") for tag, direction in ROSTER}
 
 
-def fetch_live_book(start: str = LIVE_START) -> dict[str, tuple[int, float]]:
+def fetch_live_book(start: str = LIVE_START) -> dict[str, LiveLeg]:
     """Per-leg (n, mean gross mark %) from the live trailing book. SELECT only.
 
     Goes through ``core.database`` rather than building its own psycopg2 connection:
@@ -417,6 +424,21 @@ def render(scores: list[LegScore], cal: Calibration | None, meta: dict) -> str:
                 f"{s.occ_p95:.0f} seats. {evidence}.\n"
             )
 
+    # A rostered leg the replay never saw produces no LegScore at all, so it would drop
+    # out of every table above without a trace. "Holds a seat and delivered nothing" is a
+    # distinct verdict from "loses money" and has to be visible, not absent.
+    dead = meta.get("dead_roster_legs") or []
+    lines.append("\n## Rostered legs with no trades in the window\n")
+    if not dead:
+        lines.append("\nNone — every seated leg produced at least one closed trade.\n")
+    else:
+        lines.append(
+            f"\n**{len(dead)}** seated legs produced no closed trade since {meta['live_start']}, so "
+            "they appear in no ranking above. They occupy a roster seat and deliver nothing; whether "
+            "that is a dead model or merely a quiet fortnight is not decidable from this window.\n\n"
+            f"    {', '.join(dead)}\n"
+        )
+
     drags = [s for s in scores if s.rostered and s.measured and s.corrected_total < 0]
     drags.sort(key=lambda s: s.corrected_total)
     lines.append("\n## Rostered legs that lose money on live evidence\n")
@@ -451,6 +473,10 @@ def render(scores: list[LegScore], cal: Calibration | None, meta: dict) -> str:
         "corrected value is the fit extrapolated beyond its support.\n"
         "- The replay has no stop-loss and no time-stop; live those are ~14 % of exits at ~-2.6 %. "
         "It also assumes every mirror fills and ignores the symbol and re-entry locks.\n"
+        "- **`total` is NOT realised PnL.** It is the effective per-trade rate times the REPLAY "
+        "trade count, so a live-measured leg mixes a measured rate with a simulated volume — "
+        "ATS2 LONG is -0.240 x 1085 although only 448 live trades exist. The `live n` column is "
+        "there to make that visible; read `total` as a sizing estimate, never as a book result.\n"
         "- Seat recommendations are input to an operator decision, never a change made here.\n"
     )
     return "".join(lines)
@@ -494,6 +520,7 @@ def main() -> int:
     cal = calibrate(cal_source, live, fee)
     scores = score_legs(legs, cal, rostered, live, fee)
 
+    scored_keys = {normalise_leg(s.key) for s in scores}
     meta = {
         "replay_file": args.replay,
         "replay_start": rep.get("start"),
@@ -501,6 +528,7 @@ def main() -> int:
         "live_start": args.live_start,
         "calibration": cal_label,
         "live_n": {k: v[0] for k, v in live.items()},
+        "dead_roster_legs": sorted(rostered - scored_keys),
     }
 
     os.makedirs(args.out, exist_ok=True)
@@ -524,7 +552,22 @@ def main() -> int:
                     "overstated": cal.overstated,
                     "points": cal.points,
                 },
-                "legs": [vars(s) | {"corrected_total": s.corrected_total} for s in scores],
+                # vars() yields dataclass FIELDS only — the properties carry the whole
+                # live-vs-fitted correction, so they are added explicitly. Without this
+                # the machine-readable side silently loses `basis`, which is the one
+                # column a consumer must not have to guess.
+                "legs": [
+                    vars(s)
+                    | {
+                        "effective_per_trade": s.effective_per_trade,
+                        "basis": s.basis,
+                        "measured": s.measured,
+                        "live_t": s.live_t,
+                        "corrected_total": s.corrected_total,
+                    }
+                    for s in scores
+                ],
+                "dead_roster_legs": meta["dead_roster_legs"],
             },
             fh,
             indent=2,

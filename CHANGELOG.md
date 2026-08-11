@@ -14,22 +14,29 @@ effect** — seat changes remain an operator decision.
   -0.63 pp per trade. Because the same-window run reproduces the bias, it is a **model gap, not a
   regime change**: the replay simulates a trailing exit and otherwise lets a trade run to its
   recorded close, with no stop-loss and no time-stop, while live those are ~14 % of exits at ~-2.6 %.
-* **The premise the task started from does not survive.** The four legs PR #198 rejected on density
-  (EPD3 LONG, BB_1H LONG, BR2H LONG, TSM1 SHORT) are net-POSITIVE in raw replay output and
-  net-NEGATIVE once corrected — EPD3 SHORT, never measured before because it went live after the
-  2026-07-26 run, projects to -1281 %-points over the window. They were kept out for a stated reason
-  that was wrong and an outcome that was right.
+* **The premise the task started from does not survive.** Of the four legs PR #198 rejected on
+  density, three can be re-tested (EPD3 LONG, BR2H LONG, TSM1 SHORT) and all three are net-POSITIVE
+  in raw replay output and net-NEGATIVE once corrected; **BB_1H produces no trades in the live
+  window at all**, so nothing here speaks to it. EPD3 SHORT — never measured before, because it went
+  live after the 2026-07-26 run — projects to -1393 %-points. They were kept out for a stated reason
+  that was wrong and an outcome that was right. T-129 is vindicated from the other side: the two legs
+  it retired are now the worst measured entries in the whole ranking (MIS1-72h LONG -1439 over 672
+  live trades, AIM2 SHORT -377 over 480).
 * **The real finding points the other way:** nine *rostered* legs lose money on live evidence,
-  -661 %-points combined, led by ATS2 LONG (-261 over 448 live trades) and FIF2 (-234 across both
+  -768 %-points combined, led by ATS2 LONG (-283 over 455 live trades) and FIF2 (-264 across both
   directions). **None clears |t| > 2**, so this is a watchlist and not a retirement list — acting on
-  a two-week book is the error the tool was built to catch. Re-check once the book is deeper.
+  a two-week book is the error the tool was built to catch. Re-check once the book is deeper. The one
+  leg that *does* clear the bar is positive: MIS2-72h SHORT at t=+2.87.
+* **Five seated legs produced no trades at all** (ABR1 LONG/SHORT, BR1H LONG, EPD1 SHORT, QM_4H LONG).
+  They hold a roster seat and delivered nothing in the window, and would have dropped out of every
+  table silently — the report now names them as their own category.
 * **Two guards, both from live near-misses.** A slot-budget report scores its `legs` block at its own
   selected `chosen_act`; the live-window re-run picked 0.0 where the original picked 2.0, and at 0.0
   the trail is the micro-scalper pinned in `test_trailing_slot_budget` (median hold 0.42h against
   5.58h). A mismatch is now refused outright. Second, live evidence always outranks the fitted
   correction: the regression pulls toward the mean and would otherwise have put AIM2 SHORT — retired
   by T-129 for losing money, 480 live trades at -0.511 — back near the top of a seat recommendation.
-* **Pins:** `backtest/test_trailing_roster_rerank.py`, 13 checks, DB-free.
+* **Pins:** `backtest/test_trailing_roster_rerank.py`, 16 checks, DB-free.
 
 ## [2026-08-10] Shared candle-snapshot service — "fetch once, serve many" for the nine hourly scanners (T-2026-KYT-9050-132)
 

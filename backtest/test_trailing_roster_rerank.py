@@ -144,6 +144,36 @@ def test_thin_live_coverage_falls_back_to_the_fit():
     assert abs(scores[0].effective_per_trade - cal.predict(2.0)) < 1e-9
 
 
+def test_live_t_is_the_mean_over_the_standard_error():
+    """The t drives the report's central claim ("none clears |t| > 2") — pin the formula.
+
+    mean -0.5, sd 2.0, n 400 -> se = 2.0/20 = 0.1 -> t = -5.0
+    """
+    replay = {"X LONG": {"per_trade_trail_net": 1.0, "n": 400}}
+    live = {"X LONG": (400, -0.5 + FEE, 2.0)}  # gross; net = -0.5
+    s = score_legs(replay, None, set(), live, FEE)[0]
+    assert abs(s.live_per_trade - (-0.5)) < 1e-9, s.live_per_trade
+    assert s.live_t is not None
+    assert abs(s.live_t - (-5.0)) < 1e-9, s.live_t
+
+
+def test_live_t_is_none_without_usable_spread():
+    """No stddev (single trade, or a degenerate leg) must abstain, not divide by zero."""
+    replay = {"A LONG": {"per_trade_trail_net": 1.0, "n": 10}, "B LONG": {"per_trade_trail_net": 1.0, "n": 10}}
+    live = {"A LONG": (400, 0.5, 0.0), "B LONG": (1, 0.5, 3.0)}
+    by_key = {s.key: s for s in score_legs(replay, None, set(), live, FEE)}
+    assert by_key["A LONG"].live_t is None, "zero spread must not produce a t"
+    assert by_key["B LONG"].live_t is None, "n=1 must not produce a t"
+
+
+def test_two_tuple_live_input_still_scores():
+    """Callers with only (n, mean) keep working — the spread is optional, not required."""
+    replay = {"X LONG": {"per_trade_trail_net": 1.0, "n": 100}}
+    s = score_legs(replay, None, set(), {"X LONG": (200, 0.4)}, FEE)[0]
+    assert abs(s.effective_per_trade - 0.3) < 1e-9
+    assert s.live_t is None, "no spread supplied -> no t, not a crash"
+
+
 def test_uncalibrated_scores_fall_back_to_raw():
     replay = {"A LONG": {"per_trade_trail_net": 1.25, "n": 10}}
     scores = score_legs(replay, None, set(), {}, FEE)
