@@ -41,6 +41,10 @@ os.makedirs(CHART_DIR, exist_ok=True)
 # and is on the stop list; QM_1H keeps running (redesign candidate).
 TIMEFRAMES = ['1h']
 MODEL_PATHS = {'1h': "qm_xgboost_model_1h.pkl"}
+# T-2026-KYT-9050-137 (operator decision): the bot analyses closed 1h candles
+# only, so new information appears once per hour — the previous 180 s sweep
+# re-read mostly identical data and was ~29 % of cluster A's candle reads.
+SCAN_INTERVAL_SECONDS = 900
 
 MIN_CONFIDENCE = 0.65  # FIX: previously 0.40 → far too low, poor expected value.
 ZONE_TOLERANCE = 0.005  # FIX: previously 0.01 (1%) → too wide. 0.5% is a clean retest range.
@@ -534,11 +538,11 @@ def main():
     while True:
         try:
             scan_market()
-            logger.info("Radar scan stopped. Sleeping 3 minutes...")
+            logger.info(f"Radar scan stopped. Sleeping {SCAN_INTERVAL_SECONDS // 60} minutes...")
         except Exception as e:
             logger.error(f"Error in the main loop: {e}")
 
-        time.sleep(180)
+        time.sleep(SCAN_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

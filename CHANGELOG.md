@@ -1,3 +1,17 @@
+## [2026-08-11] Cadence downshift for the two continuous sweepers 24 (QM) and 25 (BB/TD) (T-2026-KYT-9050-137)
+
+Operator decision on top of the T-136 design study: bots 24 and 25 analyse closed candles only, so
+their 180 s full-universe sweep (527 coins, bot 25 over 1h and 4h) mostly re-read identical data
+while producing ~87 % of cluster A's candle reads. Both bots now sweep every **900 s**
+(`SCAN_INTERVAL_SECONDS`, module constant), which takes cluster A from ≈ 36 250 to ≈ 11 000 DB
+reads/h before any snapshot gate (24: 2 108, 25: 4 216, rest unchanged) and to ≈ 3 600/h with
+`KYTHERA_CANDLE_SNAPSHOT=1`. Worst-case detection delay after a candle close grows from ~3 to
+~15 minutes — accepted by the operator. The `Radar scan stopped.` log prefix (the M1 measurement
+anchor from the T-136 design doc) is unchanged and now test-pinned; the design doc carries an update
+note with the post-downshift arithmetic. New DB-free pins: `backtest/test_sniper_cadence.py`
+(3 tests, source-level — the bots load model artifacts at module scope, so they are deliberately
+not imported). Effective from the next fleet restart.
+
 ## [2026-08-11] Scan-engine design for cluster A — docs only, verdict DEFER (T-2026-KYT-9050-136)
 
 `docs/T-2026-KYT-9050-136-scan-engine-design.md` (new): the design and decision template for the
