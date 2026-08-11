@@ -1,3 +1,52 @@
+## [2026-08-11] Scan-engine design for cluster A — docs only, verdict DEFER (T-2026-KYT-9050-136)
+
+`docs/T-2026-KYT-9050-136-scan-engine-design.md` (new): the design and decision template for the
+last open block of the fleet consolidation — the nine coin-walking scanners 7 (Pattern), 11 (MIS),
+12 (ATS1), 13 (RUB1), 14 (ATB1), 18 (ABR1), 24 (QM), 25 (BB/TD) and 34 (MAX1). **No code, no `.env`,
+no restart.** The document is written to be decided from, not agreed with: seven decision points,
+each with a recommendation, alternatives and the measurement that would flip it.
+
+* **The honest headline is a DEFER, and it is a consequence of T-132.** The engine was conceived to
+  kill read redundancy; the snapshot service already did that at the read layer without touching a
+  bot. Derived from the code: cluster A sends **≈ 36 250 candle reads/h** to Postgres today; with
+  `KYTHERA_CANDLE_SNAPSHOT=1` at the default 1h store that drops to **≈ 12 000/h** (−67 %),
+  the service's own sweep included. What remains for an engine is 8 × interpreter baseline and
+  16 idle DB connections, weighed against the one-process-per-bot bet of `docs/ARCHITECTURE.md` §1,
+  per-bot restart, and GIL serialisation of nine heavy scans. That trade cannot be settled from the
+  build machine, so the document defines the measurements instead of guessing them — and
+  pre-registers the shard decision rule *before* the numbers exist, so a marginal result cannot be
+  argued into a yes afterwards.
+* **Two of the nine are not hourly scanners.** Bots 24 and 25 run `scan_market(); sleep(180)` — a
+  full 527-coin sweep roughly every three minutes, bot 25 over two timeframes. They are **~87 % of
+  cluster A's read volume** and they collide with every hourly slot, which is what makes the shard
+  question real. The recommended split, if sharding is needed, is therefore by **cadence**
+  (hourly-slot bots vs. the two continuous snipers), which is the same seam that already separates
+  `core/shadow_scanners.py` from `core/signal_consumers.py`.
+* **Coin shards are ruled out on code evidence, not on measurement.** `core/max1_gate.select_signals`
+  ranks all candidates cross-sectionally and applies a hard 24 h cap read back from
+  `ml_predictions_master`; split the universe and each shard produces its own top-N against the same
+  count, so the daily cap can be overshot N-fold.
+* **Two findings that stand on their own, independent of the engine.** (1) Bot 25's 4h leg is
+  ≈ 10 540 reads/h — ~88 % of everything cluster A still sends to the DB with the gate on; adding
+  `4h` to `KYTHERA_SNAPSHOT_TIMEFRAMES` would take the cluster to ≈ 2 400/h (−93 % against today),
+  at the cost of a larger store. (2) **None of the nine writes its own log file** — they all use a
+  bare `logging.basicConfig` and their stdout is the watchdog's, so the hang detection in
+  `main_watchdog.check_heartbeat` (which needs a process's *own* `.log`) cannot see a wedged scanner
+  today. One line per bot via `core.logging_setup.setup_logging` would fix that for the nine
+  heaviest bots in the fleet.
+* **Substrate verdict: cluster A needs no new scheduling vocabulary, it needs both existing ones.**
+  `core/hosted_fleet.py` fits exactly; the slot arithmetic of T-133 fits the seven hourly bots and
+  the interval arithmetic of T-135 fits bots 24/25. What is genuinely missing is named: no per-scan
+  timeout, no process recycling (the `restart_interval=21600` precedent of `2_indicator_engine.py`
+  applies here more than anywhere), and the module-level `exit(1)` in bots 24/25 — a `SystemExit`
+  that the runners' `except Exception` loader would not contain, i.e. one missing artifact would
+  take the whole engine down at import.
+* **Migration: no shadow parallel run is possible.** Seven of the nine post live, and two schedulers
+  on the same cooldown rows race for a duplicate Cornix message (Hard Rule 4). The document proposes
+  a dispatch-disabled dry-run mode instead — it proves imports, RSS and heartbeat with zero scans —
+  followed by a five-stage per-bot switchover, each stage symmetric and rollback-cheap, with the two
+  continuous snipers last.
+
 ## [2026-08-11] Fleet consolidation cluster C: the five signal consumers share one process (T-2026-KYT-9050-135)
 
 Bots 9 (SRA), 15 (AIM2), 30 (PEX1), 33 (FIF1) and 43 (FIF2) were five permanent Python interpreters
