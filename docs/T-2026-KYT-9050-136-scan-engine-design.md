@@ -48,14 +48,14 @@ difference).
 | Bot | Tag | Trigger | Reads per pass (per coin) | Rows/read | Feature work | Model artifacts | RAM-relevant imports | State |
 |---|---|---|---|---|---|---|---|---|
 | 7 | BR… | `minute == 3`, 4 TFs gated by hour (1h always, 2h even, 4h ÷4, 1d at 00) | `read_candles` ×1 per due TF | 168 | pandas rolling pivots + `scipy.stats.linregress` | none | `mplfinance`, `matplotlib.pyplot` (**no `Agg`**), scipy | `active_patterns.json` + two module-level sets |
-| 11 | MIS1/MIS2 | `minute == 11` | `read_candles_with_indicators` ×1 | 100 | `core.mis_features.add_advanced_features`, per coin | **16** (8 × MIS2 ≈ 6.2 MB + 8 × MIS1 ≈ 13.2 MB on disk) | joblib, numpy, pandas | none (DB cooldowns) |
+| 11 | MIS1/MIS2 | `minute == 11` | `read_candles_with_indicators` ×1 | 100 | `core.mis_features.add_advanced_features`, per coin; **batched inference** (one `predict_proba` per model over all coins, `11_ai_mis_bot.py:726`) | **16** (8 × MIS2 ≈ 6.2 MB + 8 × MIS1 ≈ 13.2 MB on disk) | joblib, numpy, pandas | none (DB cooldowns) |
 | 12 | ATS1/ATS2 | `minute == 13` | `read_candles_with_indicators` ×1 | 500 | `core.ats_features.build_ats_features` | 2 (≈ 4.4 MB) | joblib, pandas | none |
 | 13 | RUB1/RUB3 | `minute == 10` | `read_candles` (95 d) + `read_indicators` (limit 1) = **2** | ~2280 / 1 | `core.rub_features` + `core.funding_features` | 2 (≈ 1.5 MB) | joblib, numpy, pandas | none |
 | 14 | ATB1/ATB2 | `minute == 3` — **parked** (`docs/ARCHITECTURE.md` §4) | `read_candles` ×1, plus 3 extra reads per chart event | 1700 | `pandas_ta`, `scipy.signal`, `scipy.stats`, `core.atb2_features` | 2 (≈ 1.2 MB) | matplotlib (`Agg`), pandas_ta, scipy | `trendline_state.json` |
 | 18 | ABR1/ABR2 | `minute == 2` | `read_candles` ×1 (+ a cached funding REST call per *setup*, 30 min TTL) | 240 | `pandas_ta` indicator recompute **per coin** | 2 XGBoost boosters (`bt2_*.json`, ≈ 5.6 MB) + calibrator | xgboost, pandas_ta, scipy, requests | in-memory funding cache |
 | 24 | QM_1H | **`sleep(180)` — every 3 min, ~20×/h** | `read_candles_with_indicators` ×1 | 100 | `scipy.signal.argrelextrema` + pivot walk | 1 (≈ 0.7 MB) | mplfinance, matplotlib (`Agg`), scipy | none |
 | 25 | BB/TD ×1h,4h | **`sleep(180)` — every 3 min, ~20×/h**, **2 TFs** | `read_candles_with_indicators` ×**2** | 150 each | pivot/breaker geometry, scipy | 4 (≈ 2.7 MB) | mplfinance, matplotlib (`Agg`), scipy | none |
-| 34 | MAX1 | `minute == 15` | `read_candles` (90 d) + `read_indicators` (limit 1) = **2** | ~2160 / 1 | `core.rub_features` + cached funding | 1 (≈ 0.75 MB) | numpy, pandas | none |
+| 34 | MAX1 | `minute == 15` | `read_candles` (95 d) + `read_indicators` (limit 1) = **2** | ~2280 / 1 | `core.rub_features` + cached funding | 1 (≈ 0.75 MB) | numpy, pandas | none |
 
 ### 1.2 The three things the table does not say loudly enough
 
@@ -115,6 +115,10 @@ split needs the same AST-parity evidence T-135 produced.
 
 Per-hour DB read counts for cluster A, derived from the code (527 coins, bot 14 counted separately
 because it is parked):
+
+Per-hour figures are ceilings: the 180 s sleep of bots 24/25 runs *after* each sweep, so their real
+cadence is `180 s + sweep duration` and the true counts sit somewhat below the ×20 bound. The share
+statements (~87 %, ~88 %, ~93 %) and the pre-registered rules in §3.2 are unaffected.
 
 | Bot | Reads/hour | Timeframes |
 |---|---|---|
