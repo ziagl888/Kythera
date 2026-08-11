@@ -107,7 +107,10 @@ FLEET: list[dict[str, Any]] = [
         "start_delay": 23,
         "restart_interval": None,
     },
-    {"name": "AI SR Bot", "script": "9_ai_sr_bot.py", "group": "strategy", "start_delay": 31, "restart_interval": None},
+    # 9 (SRA) used to hold delay 31 here. Since T-2026-KYT-9050-135 it polls
+    # inside 46_signal_consumer_runner.py — see "Signal Consumer Runner" at the
+    # end of this list. Same for 15 / 30 / 33 / 43 below; the freed delays stay
+    # free.
     {
         "name": "Pump Dump Detector",
         "script": "10_pump_dump_detector.py",
@@ -142,13 +145,6 @@ FLEET: list[dict[str, Any]] = [
         "script": "14_ai_atb_bot.py",
         "group": "ai",
         "start_delay": 71,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI AIM2 Detector",
-        "script": "15_ai_master_bot.py",
-        "group": "ai",
-        "start_delay": 79,
         "restart_interval": None,
     },
     {
@@ -250,13 +246,6 @@ FLEET: list[dict[str, Any]] = [
     },
     # ── Research Bots (Report 15: S6/S8/S10/S11 — channel CH_NEW_IDEAS) ───────
     {
-        "name": "AI PEX1 Detector",
-        "script": "30_ai_pex1_bot.py",
-        "group": "ai",
-        "start_delay": 191,
-        "restart_interval": None,
-    },
-    {
         "name": "AI FMR1 Detector",
         "script": "31_ai_fmr1_bot.py",
         "group": "ai",
@@ -268,13 +257,6 @@ FLEET: list[dict[str, Any]] = [
         "script": "32_ai_trm1_bot.py",
         "group": "ai",
         "start_delay": 207,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI FIF1 Detector",
-        "script": "33_ai_fif1_bot.py",
-        "group": "ai",
-        "start_delay": 215,
         "restart_interval": None,
     },
     # ── High-conviction throttle via RUB2-SHORT (T-2026-CU-9050-067) ──────────
@@ -297,38 +279,12 @@ FLEET: list[dict[str, Any]] = [
         "restart_interval": None,
     },
     # ── Rule-based shadow forwarder (studies K1/K2/K5/K7, T-2026-CU-9050-149) ─
-    # Pure shadow bots (no live post): validate negative/weak study
-    # signals live via monitored, never-posted trades. New entry only
-    # supervised after watchdog restart (FLEET read at watchdog import) ⇒
-    # operator gate; below 100% CPU first check capacity (restart incident 07-15).
-    {
-        "name": "AI LIS1 Detector",
-        "script": "36_ai_lis1_bot.py",
-        "group": "ai",
-        "start_delay": 239,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI TSM1 Detector",
-        "script": "37_ai_tsm1_bot.py",
-        "group": "ai",
-        "start_delay": 247,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI SKW1 Detector",
-        "script": "38_ai_skw1_bot.py",
-        "group": "ai",
-        "start_delay": 255,
-        "restart_interval": None,
-    },
-    {
-        "name": "AI XSM1 Detector",
-        "script": "39_ai_xsm1_bot.py",
-        "group": "ai",
-        "start_delay": 263,
-        "restart_interval": None,
-    },
+    # The four scanners (36 LIS1 / 37 TSM1 / 38 SKW1 / 39 XSM1) used to hold an
+    # entry each at delays 239/247/255/263. Since T-2026-KYT-9050-133 they share
+    # ONE process — see "Shadow Scanner Runner" at the end of this list. Their
+    # script names live on as bot identity (report mapping in core/bot_catalog.py,
+    # park markers control/parked/<script>.py), they just no longer own a
+    # process; the freed delays stay free.
     # ── Trailing-close arm in own channel (T-2026-KYT-9050-042 phase C) ───
     # No detector: mirrors the 33 roster legs (core/trailing_roster.py)
     # in CH_TRAILING and closes them via trailing close — the A/B arm against
@@ -386,13 +342,10 @@ FLEET: list[dict[str, Any]] = [
     # the list with the highest delay (monotonicity regression
     # backtest/test_fleet_definition.py). New entry only supervised after a
     # watchdog restart ⇒ operator gate.
-    {
-        "name": "AI FIF2 Mirror",
-        "script": "43_ai_fif2_bot.py",
-        "group": "ai",
-        "start_delay": 291,
-        "restart_interval": None,
-    },
+    # Entry given up under T-2026-KYT-9050-135 (delay 291 stays free): FIF2 is a
+    # 60 s poller on ai_signals, so it moved into 46_signal_consumer_runner.py
+    # with the other four consumers. Everything above still holds — the channel
+    # is the quiet path, the roster seat is the money path.
     # ── Unrestricted trailing twin (T-2026-KYT-9050-117) ──────────────────────
     # Bot 40's engine under TRAILING_BOT_PROFILE=free: no admission caps, ALL
     # roster trades spread evenly over CH_TRAILING_FREE_A/B (2 × Cornix-500).
@@ -427,6 +380,45 @@ FLEET: list[dict[str, Any]] = [
         "script": "candle_snapshot_service.py",
         "group": "core",
         "start_delay": 307,
+        "restart_interval": None,
+    },
+    # ── Shared shadow-scanner runner (T-2026-KYT-9050-133) ────────────────────
+    # Replaces the four entries of bots 36-39 above: four permanent interpreters
+    # (each with its own pandas/numpy import and minconn-2 pool) for a few
+    # minutes of work per week become one process that calls their unchanged
+    # run_scan() on their unchanged schedules (core/shadow_scanners.py). Per-bot
+    # error isolation and the four original park markers stay intact; the bot
+    # modules themselves are untouched. group="ai" like the four bots it hosts.
+    # Last in the list with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py). Effective only after a watchdog
+    # restart (FLEET read at watchdog import) ⇒ operator gate; until then bots
+    # 36-39 keep running from the old constellation.
+    {
+        "name": "Shadow Scanner Runner",
+        "script": "45_shadow_scanner_runner.py",
+        "group": "ai",
+        "start_delay": 311,
+        "restart_interval": None,
+    },
+    # ── Shared signal-consumer runner (T-2026-KYT-9050-135) ───────────────────
+    # Replaces the five entries of bots 9 / 15 / 30 / 33 / 43 above (delays 31 /
+    # 79 / 191 / 215 / 291): five permanent interpreters — each with its own
+    # pandas/numpy import and minconn-2 pool — that only ever polled a table.
+    # They now share one process which calls their unchanged poll cores on their
+    # unchanged cadences (core/signal_consumers.py). Per-bot error isolation and
+    # the five original park markers stay intact; each poll core still owns its
+    # DB connection, so no transaction is shared. Unlike cluster B this touches
+    # the money path (15 and 33 post live, 43 fills a trailing roster seat) —
+    # hence the behaviour-neutrality proof in the PR. group="ai" like the bots it
+    # hosts. Last in the list with the highest delay (monotonicity regression
+    # backtest/test_fleet_definition.py). Effective only after a watchdog restart
+    # (FLEET read at watchdog import) ⇒ operator gate; until then the five bots
+    # keep running from the old constellation.
+    {
+        "name": "Signal Consumer Runner",
+        "script": "46_signal_consumer_runner.py",
+        "group": "ai",
+        "start_delay": 319,
         "restart_interval": None,
     },
 ]

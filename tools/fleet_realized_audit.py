@@ -374,10 +374,19 @@ def lifecycle_bucket(tag: str, direction: str, active_scripts_set: set[str]) -> 
 
 
 def resolve_active_scripts(parked_dir: str | None) -> set[str]:
-    """Fleet scripts minus parked. `parked_dir` points at the LIVE checkout's
-    control/parked so the worktree sees the true park state; None falls back to
-    the worktree-relative process_control.list_parked()."""
+    """Fleet scripts minus parked, with each runner expanded into its hosted bots.
+
+    `parked_dir` points at the LIVE checkout's control/parked so the worktree
+    sees the true park state; None falls back to the worktree-relative
+    process_control.list_parked(). That override is the only reason this is not
+    simply bot_catalog.active_scripts() — the hosted-bot expansion itself is NOT
+    restated here but taken from core.hosted_fleet.expand_hosted(), the same
+    function the catalog uses (T-2026-KYT-9050-133/135). Without it the LIVE legs
+    TSM1/SKW1/XSM1/XSR1 (bots 36-39) and SRA/AIM2/PEX1/FIF1/FIF2 (bots
+    9/15/30/33/43) would be reported as "inactive" while their runner drives
+    them, because none of those bots carries a fleet entry of its own."""
     from core.fleet import FLEET
+    from core.hosted_fleet import expand_hosted
 
     all_scripts = {entry["script"] for entry in FLEET}
     if parked_dir and os.path.isdir(parked_dir):
@@ -386,7 +395,7 @@ def resolve_active_scripts(parked_dir: str | None) -> set[str]:
         from core.process_control import list_parked
 
         parked = list_parked()
-    return {s for s in all_scripts if s not in parked}
+    return expand_hosted({s for s in all_scripts if s not in parked}, parked)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

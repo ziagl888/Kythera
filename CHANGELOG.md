@@ -37,6 +37,196 @@ effect** — seat changes remain an operator decision.
   correction: the regression pulls toward the mean and would otherwise have put AIM2 SHORT — retired
   by T-129 for losing money, 480 live trades at -0.511 — back near the top of a seat recommendation.
 * **Pins:** `backtest/test_trailing_roster_rerank.py`, 16 checks, DB-free.
+## [2026-08-11] Cadence downshift for the two continuous sweepers 24 (QM) and 25 (BB/TD) (T-2026-KYT-9050-137)
+
+Operator decision on top of the T-136 design study: bots 24 and 25 analyse closed candles only, so
+their 180 s full-universe sweep (527 coins, bot 25 over 1h and 4h) mostly re-read identical data
+while producing ~87 % of cluster A's candle reads. Both bots now sweep every **900 s**
+(`SCAN_INTERVAL_SECONDS`, module constant), which takes cluster A from ≈ 36 250 to ≈ 11 000 DB
+reads/h before any snapshot gate (24: 2 108, 25: 4 216, rest unchanged) and to ≈ 3 600/h with
+`KYTHERA_CANDLE_SNAPSHOT=1`. Worst-case detection delay after a candle close grows from ~3 to
+~15 minutes — accepted by the operator. The `Radar scan stopped.` log prefix (the M1 measurement
+anchor from the T-136 design doc) is unchanged and now test-pinned; the design doc carries an update
+note with the post-downshift arithmetic. New DB-free pins: `backtest/test_sniper_cadence.py`
+(3 tests, source-level — the bots load model artifacts at module scope, so they are deliberately
+not imported). Effective from the next fleet restart.
+
+## [2026-08-11] Scan-engine design for cluster A — docs only, verdict DEFER (T-2026-KYT-9050-136)
+
+`docs/T-2026-KYT-9050-136-scan-engine-design.md` (new): the design and decision template for the
+last open block of the fleet consolidation — the nine coin-walking scanners 7 (Pattern), 11 (MIS),
+12 (ATS1), 13 (RUB1), 14 (ATB1), 18 (ABR1), 24 (QM), 25 (BB/TD) and 34 (MAX1). **No code, no `.env`,
+no restart.** The document is written to be decided from, not agreed with: seven decision points,
+each with a recommendation, alternatives and the measurement that would flip it.
+
+* **The honest headline is a DEFER, and it is a consequence of T-132.** The engine was conceived to
+  kill read redundancy; the snapshot service already did that at the read layer without touching a
+  bot. Derived from the code: cluster A sends **≈ 36 250 candle reads/h** to Postgres today; with
+  `KYTHERA_CANDLE_SNAPSHOT=1` at the default 1h store that drops to **≈ 12 000/h** (−67 %),
+  the service's own sweep included. What remains for an engine is 8 × interpreter baseline and
+  16 idle DB connections, weighed against the one-process-per-bot bet of `docs/ARCHITECTURE.md` §1,
+  per-bot restart, and GIL serialisation of nine heavy scans. That trade cannot be settled from the
+  build machine, so the document defines the measurements instead of guessing them — and
+  pre-registers the shard decision rule *before* the numbers exist, so a marginal result cannot be
+  argued into a yes afterwards.
+* **Two of the nine are not hourly scanners.** Bots 24 and 25 run `scan_market(); sleep(180)` — a
+  full 527-coin sweep roughly every three minutes, bot 25 over two timeframes. They are **~87 % of
+  cluster A's read volume** and they collide with every hourly slot, which is what makes the shard
+  question real. The recommended split, if sharding is needed, is therefore by **cadence**
+  (hourly-slot bots vs. the two continuous snipers), which is the same seam that already separates
+  `core/shadow_scanners.py` from `core/signal_consumers.py`.
+* **Coin shards are ruled out on code evidence, not on measurement.** `core/max1_gate.select_signals`
+  ranks all candidates cross-sectionally and applies a hard 24 h cap read back from
+  `ml_predictions_master`; split the universe and each shard produces its own top-N against the same
+  count, so the daily cap can be overshot N-fold.
+* **Two findings that stand on their own, independent of the engine.** (1) Bot 25's 4h leg is
+  ≈ 10 540 reads/h — ~88 % of everything cluster A still sends to the DB with the gate on; adding
+  `4h` to `KYTHERA_SNAPSHOT_TIMEFRAMES` would take the cluster to ≈ 2 400/h (−93 % against today),
+  at the cost of a larger store. (2) **None of the nine writes its own log file** — they all use a
+  bare `logging.basicConfig` and their stdout is the watchdog's, so the hang detection in
+  `main_watchdog.check_heartbeat` (which needs a process's *own* `.log`) cannot see a wedged scanner
+  today. One line per bot via `core.logging_setup.setup_logging` would fix that for the nine
+  heaviest bots in the fleet.
+* **Substrate verdict: cluster A needs no new scheduling vocabulary, it needs both existing ones.**
+  `core/hosted_fleet.py` fits exactly; the slot arithmetic of T-133 fits the seven hourly bots and
+  the interval arithmetic of T-135 fits bots 24/25. What is genuinely missing is named: no per-scan
+  timeout, no process recycling (the `restart_interval=21600` precedent of `2_indicator_engine.py`
+  applies here more than anywhere), and the module-level `exit(1)` in bots 24/25 — a `SystemExit`
+  that the runners' `except Exception` loader would not contain, i.e. one missing artifact would
+  take the whole engine down at import.
+* **Migration: no shadow parallel run is possible.** Seven of the nine post live, and two schedulers
+  on the same cooldown rows race for a duplicate Cornix message (Hard Rule 4). The document proposes
+  a dispatch-disabled dry-run mode instead — it proves imports, RSS and heartbeat with zero scans —
+  followed by a five-stage per-bot switchover, each stage symmetric and rollback-cheap, with the two
+  continuous snipers last.
+
+## [2026-08-11] Fleet consolidation cluster C: the five signal consumers share one process (T-2026-KYT-9050-135)
+
+Bots 9 (SRA), 15 (AIM2), 30 (PEX1), 33 (FIF1) and 43 (FIF2) were five permanent Python interpreters
+— each with its own pandas/numpy import and its own minconn-2 DB pool — for one job: polling a
+table. They scan no coins; they wake up every 60 s (bot 9: every 300 s), ask the DB "anything new?"
+and sleep again. They now run inside one process. Five fleet entries out, one in; **effective only
+after a watchdog restart** (FLEET is read at watchdog import), so the old constellation keeps
+running unchanged until Michi restarts.
+
+Unlike cluster B (T-133, four shadow-only scanners) this cluster reaches real money: 15 and 33 post
+LIVE, and 43 fills a trailing roster seat that bot 40 mirrors into the Cornix-executed channel.
+Behaviour neutrality is therefore the merge condition, and it is proven rather than asserted — see
+the AST parity check below.
+
+* **`46_signal_consumer_runner.py` (new, fleet entry `start_delay=319`, group `ai`):** imports the
+  five bot modules via importlib (the `44_trailing_free_bot.py` pattern) and calls their
+  `startup()` once and their `run_poll()` on their own cadence. No posting, cooldown, gate,
+  watermark or dedup code is touched; each poll core still opens, rolls back and closes its OWN DB
+  connection per cycle, so a poisoned transaction cannot leak from one bot into the next — they
+  never share one.
+* **The bot files were split at exactly one seam.** `main()` became `startup()` + `run_poll()` +
+  the unchanged `while True: run_poll(); time.sleep(N)`, so every file stays runnable standalone
+  for debugging. An AST comparison against the pre-split files shows the two functions are
+  statement-for-statement identical to the old `main()`, with exactly three deliberate exceptions:
+  bots 30/33 turn the idle-mode `time.sleep(60); continue` into a `return` (the caller owns the
+  sleep now), and loop state that used to be a local of `main()` (bot 30's watermark, bot 33's
+  seen-set, bot 43's samples/seen/bootstrap) became a module-level global of the SAME module —
+  still one instance per bot, still invisible to the other four. The only literal that changed is
+  the leading indentation inside two of bot 9's SQL heredocs.
+* **`core/signal_consumers.py` (new):** the roster and the cadence arithmetic as pure, DB-free,
+  clock-injectable code. A due time is re-armed from the moment a poll FINISHES, never from the
+  moment it was due — which is exactly what `poll(); sleep(N)` did per process, and what keeps a
+  slow poll from queueing a backlog behind itself.
+* **`core/hosted_fleet.py` (new):** T-133 built the hosted-bot expansion for ONE runner. With a
+  second runner the rule ("a hosted bot is active exactly when its runner runs and its own park
+  marker is absent") moved into a registry over all runners instead of being restated per runner —
+  the T-133 review explicitly killed a second drifting mirror, and this keeps that promise.
+  `core/bot_catalog.py`, `tools/fleet_realized_audit.py` and `main_watchdog.py` now read the
+  registry; `core/shadow_scanners.py` keeps only what is genuinely runner-specific (its roster and
+  its slot schedule).
+* **Per-bot arming.** A bot polls only after its own `startup()` succeeded, and `startup()` runs at
+  its first dispatch rather than at process start. That is the money-path-safe direction: bots
+  30/33 build their anti-replay state there (watermark from `MAX(spike_time)`, seen-set of the live
+  window), so polling without it would repost a window that has already been posted — and a bot
+  parked at boot bootstraps from the CURRENT window when it is unparked, not from hours ago. A
+  failed startup leaves the bot unarmed and is retried on its next cycle, which is the standalone
+  equivalent of dying in `main()` and being restarted by the watchdog.
+* **Per-bot error isolation (bot-29 pattern):** every startup and every poll runs in its own
+  `try/except`; an exception is logged with its traceback and the other four keep polling. Same for
+  the import — a module that fails to load leaves the other four working. Every consumer is
+  re-armed in a `finally`, so a persistent failure costs one cycle per interval instead of turning
+  into a hot loop.
+* **Park granularity survives.** Before every poll the runner checks the **five original** markers
+  `control/parked/<script>.py`, per bot and per cycle, so
+  `python -c "from core.process_control import park; park('33_ai_fif1_bot.py')"` still silences
+  FIF1 alone; unparking takes effect on the next cycle without a restart. Parking the runner stops
+  all five, which is what parking a process means. What is lost: the five bots no longer have their
+  own dashboard row, so the marker file above is their park path.
+* **The documented divergence, and why it is logged.** Dispatch is sequential, so a bot's period is
+  now `interval + own duration + the siblings dispatched before it`, where five processes only paid
+  `interval + own duration`. Starvation is impossible (one pass runs each due bot at most once, and
+  due times come from completion), but slow degradation is not — the tightest freshness bound in
+  the cluster is FIF2's `MAX_MIRROR_AGE_S` of 240 s. A poll that starts more than 30 s late
+  therefore logs a WARNING naming the bot and the delay, so the cost is visible before it costs
+  mirrors.
+* **Model-reload semantics kept.** The 24 h artifact reload of bots 9 and 15 stays inside
+  `run_poll()` — hoisting it into `startup()` would pin the runner to the artifacts it booted with
+  and turn a deploy into a fleet restart. Pinned by a test.
+* **`main_watchdog.py`:** the five script names stay in the orphan-reap set although they are never
+  started — during the switchover restart the old processes are alive right up to the moment the
+  tree stops, and a survivor would poll next to the runner: two schedulers on the same cooldown
+  rows, i.e. a race for a duplicate LIVE post.
+* **Tests:** `backtest/test_signal_consumer_runner.py` (new, 66 tests) covers the cadences, the
+  arming rule, per-bot park markers, error isolation, the lateness warning and the report identity;
+  DB-free, no sleeping, injected clock. `test_shadow_runner.py` 69/69, `test_fleet_definition.py`
+  10/10, `test_bot_catalog.py` 51/51, `test_dashboard_fleet_registry.py` 23/23 and the sixteen
+  existing suites of the five bots stay green; `guard.py verify` 24/24.
+
+## [2026-08-11] Fleet consolidation cluster B: the four rule-based shadow scanners share one process (T-2026-KYT-9050-133)
+
+Bots 36 (LIS1), 37 (TSM1), 38 (SKW1) and 39 (XSM1/XSR1) were four permanent Python interpreters —
+each with its own pandas/numpy import and its own minconn-2 DB pool — for a few minutes of work per
+**week**: hourly at minute 23, minute 29 of every 4h hour, Monday 00:31 and Monday 00:37 UTC. They
+now run inside one process. Four fleet entries out, one in; **effective only after a watchdog
+restart** (FLEET is read at watchdog import), so the old constellation keeps running unchanged until
+Michi restarts.
+
+* **`45_shadow_scanner_runner.py` (new, fleet entry `start_delay=311`, group `ai`):** imports the
+  four bot modules via importlib (the `44_trailing_free_bot.py` pattern) and calls their
+  `run_scan()` when a slot is due. **The four bot files are not modified at all** — they already
+  separated `run_scan()` from `main()`, so signal logic, posting, cooldowns and shadow gates are
+  reached through the same code as before, and each `run_scan` still owns its DB connection
+  (open / rollback per symbol / close). They also stay runnable standalone for debugging.
+* **`core/shadow_scanners.py` (new):** the roster and the schedule as pure, DB-free arithmetic —
+  "which slot is current" instead of "is this the minute", which is the same predicate the four
+  `main()` loops used, expressed so it is testable without a clock.
+* **Per-bot error isolation (bot-29 pattern):** each scan runs in its own `try/except`; an
+  exception is logged with its traceback and the other three still scan. Same for the import — a
+  module that fails to load leaves the other three working instead of killing the process. A failed
+  slot is marked handled *before* the scan runs, so a persistently failing scanner burns one slot
+  rather than every 10 s tick.
+* **Park granularity survives.** Before every scan the runner checks the **four original** markers
+  `control/parked/<script>.py`, per bot and per slot, so
+  `python -c "from core.process_control import park; park('37_ai_tsm1_bot.py')"` still silences
+  TSM1 alone; unparking takes effect at the next slot without a restart. Parking the runner stops
+  all four, which is what parking a process means. What is lost: the four bots no longer have their
+  own dashboard row, so the marker file above is their park path.
+* **Two documented divergences,** both deliberate. (1) Dispatch is sequential, so a slot may run
+  **late** — up to a 30-minute grace window — when a sibling scan overruns its minute; on Monday
+  00:xx all four slots sit within 14 minutes of each other and SKW1's weekly 15m sweep is the slow
+  one. Running late beats dropping a weekly rebalance; a slot past the grace window is skipped with
+  a WARNING, never silently. (2) A runner started inside a due minute waits for the *next* slot —
+  the safe direction during the switchover.
+* **Reports keep their per-bot identity.** `core/bot_catalog.py` still maps LIS/TSM/SKW/XSM/XSR onto
+  bots 36-39; only `active_scripts()` learned that those four are active exactly when the runner
+  runs and their own marker is absent. Without that expansion every TSM1/SKW1/XSM1/XSR1 leg would
+  have dropped into the "inactive" bucket of the realised report at switchover.
+* **`main_watchdog.py`:** the four script names stay in the orphan-reap set although they are never
+  started again. The switchover happens at a restart, with the old processes alive up to that
+  moment — a survivor of the tree stop would keep scanning next to the runner, i.e. two schedulers
+  on the same cooldown rows racing for a duplicate LIVE post.
+* **Log lines keep their shape:** the modules are imported under their old prefixes (`LIS1_BOT`, …)
+  and the runner formats with `%(name)s`, so only the destination file changes.
+* **Verification:** `backtest/test_shadow_runner.py` (new, 57 tests: schedule incl. the 4h-grid and
+  week-wrap edges, grace window, per-bot park markers, error isolation, report identity),
+  `test_fleet_definition.py` 10/10, `test_bot_catalog.py` 51/51, `test_dashboard_fleet_registry.py`
+  23/23, the four bot suites unchanged and green, `guard.py verify` 24/24.
 
 ## [2026-08-10] Shared candle-snapshot service — "fetch once, serve many" for the nine hourly scanners (T-2026-KYT-9050-132)
 

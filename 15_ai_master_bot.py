@@ -738,7 +738,11 @@ def process_master_trades():
     logger.info("🏁 AIM2 master analysis finished.")
 
 
-def main():
+def startup() -> None:
+    """One-time init: processed-signals table, model load, TOPN operating point.
+
+    Everything main() did before entering its loop (T-2026-KYT-9050-135).
+    """
     logger.info(f"=== 🧠 AI MASTER BOT (AIM2) STARTED — {'LIVE-POSTING' if LIVE_POSTING else 'SHADOW-ONLY'} ===")
     # R3: which reading interprets the signal stream is logged —
     # a silent wrong assumption about the history would be exactly the P0.13 error mode.
@@ -778,10 +782,24 @@ def main():
     else:
         logger.info("    AIM2-TOPN disabled (AIM2_TOPN_ENABLED≠1) — base AIM2 unchanged.")
 
+
+def run_poll() -> None:
+    """One poll cycle — the body of main()'s loop, unchanged.
+
+    The 24 h reload check stays part of the cycle (R07-AIM1-b): moving it to
+    startup would pin the process to the artifact it booted with.
+    """
+    if time.time() - ARTIFACT["loaded_at"] > MODEL_RELOAD_S:
+        load_model()
+    process_master_trades()
+
+
+def main():
+    """Standalone entry. In the fleet 46_signal_consumer_runner.py drives the
+    two functions above instead; the file stays runnable for debugging."""
+    startup()
     while True:
-        if time.time() - ARTIFACT["loaded_at"] > MODEL_RELOAD_S:
-            load_model()
-        process_master_trades()
+        run_poll()
         time.sleep(60)
 
 

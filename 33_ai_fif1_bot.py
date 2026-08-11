@@ -295,8 +295,22 @@ def process_signal(conn, sig: dict) -> None:
     conn.commit()
 
 
-def main() -> None:
-    global LIVE_POSTING
+# Loop state. Module-level since T-2026-KYT-9050-135, when the loop itself moved
+# into 46_signal_consumer_runner.py: this was a local of main(), and a poll core
+# the runner calls cannot keep it there. Scope is unchanged — one instance per
+# bot module, invisible to the other four consumers in that process. It is the
+# anti-replay guard of this bot: startup() marks everything currently in the
+# window as seen, so a poll before a successful startup would post the whole
+# window a second time. The runner therefore never polls an unarmed bot.
+seen: dict[tuple, datetime.datetime] = {}
+
+
+def startup() -> None:
+    """One-time init: indices, feature self-check, seen-set of the live window.
+
+    Everything main() did before entering its loop (T-2026-KYT-9050-135).
+    """
+    global LIVE_POSTING, seen
     logger.info("=== 🎛️ AI FIF1 BOT (FIFO filter, S11) STARTED ===")
     if TARGET_CHANNEL_ID == 0:
         logger.warning("Neither CH_FIF1 nor CH_NEW_IDEAS set — forcing shadow-only mode.")
@@ -317,7 +331,7 @@ def main() -> None:
     # Don't retroactively process signals that occurred BEFORE the bot start:
     # mark the current window as seen (also prevents double posts
     # after a quick bot restart within the window).
-    seen: dict[tuple, datetime.datetime] = {}
+    seen = {}
     now0 = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for sig in fetch_recent_signals(conn):
         seen[signal_key(sig)] = now0
@@ -325,41 +339,56 @@ def main() -> None:
     conn.close()
     logger.info(f"Start: {len(seen)} signals in the window marked as seen.")
 
-    while True:
-        ensure_artifact()
-        if not ARTIFACT["loaded"]:
-            time.sleep(60)
-            continue
 
-        conn = get_db_connection()
-        try:
-            signals = fetch_recent_signals(conn)
-            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-            conn_dead = False
-            for sig in signals:
-                key = signal_key(sig)
-                if key in seen:
-                    continue
-                seen[key] = now  # process-once, no retry loop even on error
+def run_poll() -> None:
+    """One poll cycle — the body of main()'s loop, unchanged.
+
+    The idle-mode branch is the one statement that had to change shape: it used
+    to be ``time.sleep(60); continue`` inside the loop, i.e. "skip this cycle".
+    Returning IS that, now that the caller owns the sleep.
+    """
+    global seen
+    ensure_artifact()
+    if not ARTIFACT["loaded"]:
+        return
+
+    conn = get_db_connection()
+    try:
+        signals = fetch_recent_signals(conn)
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        conn_dead = False
+        for sig in signals:
+            key = signal_key(sig)
+            if key in seen:
+                continue
+            seen[key] = now  # process-once, no retry loop even on error
+            try:
+                process_signal(conn, sig)
+            except Exception as e:
+                logger.error(f"Error for {sig.get('coin')} (FIFO #{sig.get('id')}): {e}")
+            finally:
                 try:
-                    process_signal(conn, sig)
-                except Exception as e:
-                    logger.error(f"Error for {sig.get('coin')} (FIFO #{sig.get('id')}): {e}")
-                finally:
-                    try:
-                        conn.rollback()  # P2.32 pattern; a no-op after commit
-                    except Exception:
-                        logger.error("Rollback failed (dead connection) — aborting cycle.")
-                        conn_dead = True
-                if conn_dead:
-                    break
-            # Trim the seen set (window + margin — stays constantly small)
-            cutoff = now - datetime.timedelta(minutes=SIGNAL_MAX_AGE_MIN * 3)
-            seen = {k: v for k, v in seen.items() if v >= cutoff}
-        except Exception as e:
-            logger.error(f"FIF1 poll error: {e}")
-        finally:
-            conn.close()
+                    conn.rollback()  # P2.32 pattern; a no-op after commit
+                except Exception:
+                    logger.error("Rollback failed (dead connection) — aborting cycle.")
+                    conn_dead = True
+            if conn_dead:
+                break
+        # Trim the seen set (window + margin — stays constantly small)
+        cutoff = now - datetime.timedelta(minutes=SIGNAL_MAX_AGE_MIN * 3)
+        seen = {k: v for k, v in seen.items() if v >= cutoff}
+    except Exception as e:
+        logger.error(f"FIF1 poll error: {e}")
+    finally:
+        conn.close()
+
+
+def main() -> None:
+    """Standalone entry. In the fleet 46_signal_consumer_runner.py drives the
+    two functions above instead; the file stays runnable for debugging."""
+    startup()
+    while True:
+        run_poll()
         time.sleep(60)
 
 

@@ -502,7 +502,25 @@ def run_cycle(conn, samples: list[list[float]], seen: dict[int, float], bootstra
         _log_quiet(f"{len(evaluated)} candidates below the q{int(GATE_QUANTILE * 100)} threshold {threshold:.4f}")
 
 
-def main() -> None:
+# Loop state. Module-level since T-2026-KYT-9050-135, when the loop itself moved
+# into 46_signal_consumer_runner.py: these were locals of main(), and a poll core
+# the runner calls cannot keep them there. Scope is unchanged — one instance per
+# bot module, invisible to the other four consumers in that process.
+#   samples   the trailing 5m-vol distribution the q80 gate is taken over,
+#             persisted to STATE_PATH and mutated in place by run_cycle.
+#   seen      signal id → mirror timestamp, the per-cycle dedup.
+#   bootstrap first cycle after startup: run_cycle then only fills state.
+samples: list[list[float]] = []
+seen: dict[int, float] = {}
+bootstrap = True
+
+
+def startup() -> None:
+    """One-time init: log the operating point and load the gate state.
+
+    Everything main() did before entering its loop (T-2026-KYT-9050-135).
+    """
+    global samples, seen, bootstrap
     live_leg = {d: shadow_gate.leg_status(MODEL_ID, d) for d in ("LONG", "SHORT")}
     logger.info(
         f"FIF2 start — channel={TARGET_CHANNEL_ID} live={LIVE_POSTING} legs={live_leg} · "
@@ -515,24 +533,36 @@ def main() -> None:
     if not LIVE_POSTING:
         logger.warning("FIF2: FIF2_LIVE_POSTING=0 → shadow-only, no outbox rows.")
     samples = load_state()
-    seen: dict[int, float] = {}
+    seen = {}
     bootstrap = True
+
+
+def run_poll() -> None:
+    """One poll cycle — the body of main()'s loop, unchanged."""
+    global bootstrap
+    conn = None
+    try:
+        conn = get_db_connection()
+        n_before = len(samples)
+        run_cycle(conn, samples, seen, bootstrap)
+        bootstrap = False
+        if len(samples) != n_before:
+            atomic_write_json(STATE_PATH, {"samples": samples})
+    except Exception as exc:  # noqa: BLE001 — a bot must survive one bad cycle
+        logger.error(f"FIF2 cycle failed: {exc}")
+        if conn is not None:
+            conn.rollback()
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def main() -> None:
+    """Standalone entry. In the fleet 46_signal_consumer_runner.py drives the
+    two functions above instead; the file stays runnable for debugging."""
+    startup()
     while True:
-        conn = None
-        try:
-            conn = get_db_connection()
-            n_before = len(samples)
-            run_cycle(conn, samples, seen, bootstrap)
-            bootstrap = False
-            if len(samples) != n_before:
-                atomic_write_json(STATE_PATH, {"samples": samples})
-        except Exception as exc:  # noqa: BLE001 — a bot must survive one bad cycle
-            logger.error(f"FIF2 cycle failed: {exc}")
-            if conn is not None:
-                conn.rollback()
-        finally:
-            if conn is not None:
-                conn.close()
+        run_poll()
         time.sleep(POLL_SECONDS)
 
 

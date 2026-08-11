@@ -43,6 +43,11 @@ os.makedirs(CHART_DIR, exist_ok=True)
 
 TIMEFRAMES = ['1h', '4h']
 PIVOT_WINDOW = 10
+# T-2026-KYT-9050-137 (operator decision): the bot analyses closed 1h/4h
+# candles only, so new information appears once per hour at most — the previous
+# 180 s sweep over two timeframes re-read mostly identical data and was ~58 %
+# of cluster A's candle reads.
+SCAN_INTERVAL_SECONDS = 900
 MAX_BB_AGE = 20  # P2.39: breakout/breakdown may be at most 20 closed candles old
 
 # 💥 Die optimalen Thresholds aus deinem Training (RR = 1:2)
@@ -757,11 +762,11 @@ def main():
     while True:
         try:
             scan_market()
-            logger.info("Radar scan stopped. Sleeping 3 minutes...")
+            logger.info(f"Radar scan stopped. Sleeping {SCAN_INTERVAL_SECONDS // 60} minutes...")
         except Exception as e:
             logger.error(f"Error in the main loop: {e}")
 
-        time.sleep(180)
+        time.sleep(SCAN_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
