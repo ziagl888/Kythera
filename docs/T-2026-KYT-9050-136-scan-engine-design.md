@@ -116,9 +116,21 @@ split needs the same AST-parity evidence T-135 produced.
 Per-hour DB read counts for cluster A, derived from the code (527 coins, bot 14 counted separately
 because it is parked):
 
-Per-hour figures are ceilings: the 180 s sleep of bots 24/25 runs *after* each sweep, so their real
-cadence is `180 s + sweep duration` and the true counts sit somewhat below the ×20 bound. The share
+Per-hour figures are ceilings: the sweep sleep of bots 24/25 runs *after* each sweep, so their real
+cadence is `interval + sweep duration` and the true counts sit somewhat below the bound. The share
 statements (~87 %, ~88 %, ~93 %) and the pre-registered rules in §3.2 are unaffected.
+
+> **Update 2026-08-11 (T-2026-KYT-9050-137, operator decision):** the tables below describe the
+> 180 s cadence this document was written against. Bots 24/25 have since been down-shifted to
+> `SCAN_INTERVAL_SECONDS = 900` (both bots analyse closed candles only, so a 3-minute sweep mostly
+> re-read identical data). Effective from the next restart, their ×20/h factor becomes ×4/h:
+> cluster A's DB reads drop from ≈ 36 250/h to ≈ 11 000/h *before* any snapshot gate (24: 2 108,
+> 25: 4 216, rest unchanged ≈ 4 633), and with `KYTHERA_CANDLE_SNAPSHOT=1` (1h store) to ≈ 3 600/h;
+> adding `4h` (D0) then mainly serves bot 25's remaining 4h leg (~2 100/h at the new cadence). The D2 DEFER logic and the §3.2 thresholds are
+> unaffected — M1 measures duration, not cadence — but the *urgency* of D0 and of the engine both
+> drop accordingly. C1 (`≤ 180 s`) and C3 (`20·S_c`) still encode the old cadence numerically; after
+> the downshift they are conservative bounds (real: 900 s / ×4), which can only push the verdict
+> towards DEFER/shards, never into a false yes — a D2 session should restate them at ×4.
 
 | Bot | Reads/hour | Timeframes |
 |---|---|---|
