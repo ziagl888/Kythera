@@ -1,3 +1,27 @@
+## [2026-08-12] A runtime LONG×tape exit gate for the trailing books, pre-registered and killed by its own holdout (T-2026-KYT-9050-139)
+
+The trailing books lose through the exits the trail cannot protect (SOURCE_CLOSED, SL_HIT,
+TIME_STOP), and Bot 40's realized loss is almost entirely LONG-side — so the obvious runtime gate is
+"exit LONGs when the BTC tape turns down". `tools/trailing_exit_gate_study.py` (new, read-only,
+T-120 snapshot pattern) prices that gate as a paired counterfactual overlay on 5,274 closed trades of
+both books: a trade runs exactly as booked until the gate first fires, then closes at the real
+`ticker_10s` mark. Six pre-registered variant cells, selection on a frozen FIT window, one look at
+the holdout (`docs/T-2026-KYT-9050-139-trailing-exit-gate-study.md`, pre-registration committed
+before any outcome was computed).
+
+* **Verdict: NO-EDGE — the gate is not wired.** The FIT winner (TD1/G-A, 4h-momentum tape, exit any
+  LONG) carried a fit t of **+5.73** and a holdout t of **−2.31** (mean −0.062 %/trade; Bot 40
+  holdout −295 %-points at t −3.53). A market-level tape flag flips sign between adjacent three-week
+  windows — regime fit, not edge. Third exit overlay to die this way (T-035, T-031).
+* **The mechanism is now measured, not guessed:** the gate does reduce SL_HIT (257→192 exits) and
+  SOURCE_CLOSED (1,186→901) mass, but kills **745 future TRAIL winners** (~1,584 %-points of forgone
+  trail profit) — missed recoveries cost more than avoided stops save.
+* Stage 2 (per-position hazard model on the T-110 own-4h-vol family) deliberately NOT auto-started;
+  the fee finding stands regardless (book Ø/trade < 0.10 % fee → the cheaper lever is admission
+  thinning via the T-134 watchlist). Operator decision.
+* New DB-free suite `backtest/test_trailing_exit_gate_study.py` (8 tests: tape flags, closed-candle
+  state lookup, first-fire semantics of all three gate variants, paired t).
+
 ## [2026-08-11] The trailing roster, scored against the live book instead of against itself (T-2026-KYT-9050-134)
 
 The roster in `core/trailing_roster.py` ranks legs by **density** — net result per occupied

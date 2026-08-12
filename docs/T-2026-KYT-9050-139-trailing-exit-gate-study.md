@@ -83,6 +83,53 @@ overlays died before (T-035, T-031).
 - The study reads the live PG read-only, in one snapshot pull to local parquet
   (T-120 pattern); replay and stats run offline against the snapshot.
 
-## 3. Results
+## 3. Results (run 2026-08-12, snapshot from the live PG at ~08:3x UTC)
 
-*Appended after the run — absent until then by construction.*
+**Verdict: NO-EDGE. The gate is not wired.** The FIT window would have shipped it; the
+frozen holdout killed it. That ordering is the whole point of §2.
+
+Snapshot: 5,274 trades (Bot 40: 3,886 · Bot 44: 1,388), FIT 1,315, HOLDOUT 3,959
+(Bot 40 holdout 2,571 + Bot 44 1,388). One deviation from §2, storage only: the local
+snapshot is pickle, not parquet (no parquet engine in the analysis env). Zero
+fired-but-no-mark exclusions — the tick+candle fallback covered every gate exit.
+
+### FIT (variant selection — six cells, one look)
+
+| cell | Σdelta | mean | t |
+|---|---|---|---|
+| **TD1/G-A** (winner) | **+601.4** | +0.457 | +5.73 |
+| TD2/G-A | +581.6 | +0.442 | +5.60 |
+| TD2/G-B | +406.1 | +0.309 | +4.39 |
+| TD1/G-B | +343.8 | +0.261 | +3.71 |
+| TD2/G-C | +311.8 | +0.237 | +3.58 |
+| TD1/G-C | +261.1 | +0.199 | +2.96 |
+
+### HOLDOUT (TD1/G-A, evaluated once)
+
+| book | n | Σdelta | mean | t |
+|---|---|---|---|---|
+| all | 3,959 | **−244.2** | −0.062 | **−2.31** |
+| Bot 40 holdout | 2,571 | −294.9 | −0.115 | −3.53 |
+| Bot 44 | 1,388 | +50.7 | +0.037 | +0.79 |
+
+Criterion 1 (mean > 0, t ≥ 2): **failed — significantly negative.**
+Criterion 2 (Σ > 0 on both books): **failed** (Bot 40 holdout −294.9).
+Criterion 3 (exit mix): the gate does reduce the SL_HIT mass (257→192 trades,
+−1,054→−732) and SOURCE_CLOSED (1,186→901, −1,805→−1,224), and the GATE bucket itself is
+cheap (1,597 exits at Ø −0.16). The gate loses anyway because it kills **745 future TRAIL
+winners** (1,867→1,122; +4,026→+2,442, i.e. ~−1,584 of forgone trail profit) — the
+missed recoveries cost more than the avoided stops save.
+
+### Reading
+
+A market-level tape flag flips sign between adjacent three-week windows: in the FIT
+window (26.07–04.08) exiting LONGs into BTC weakness was worth +0.46 %/trade; in the
+holdout the same rule pays −0.06 %/trade. The FIT t of +5.73 was regime fit, not edge —
+the third exit overlay to die this way (T-035 wave exit, T-031 SOFT regime). Any future
+runtime exit idea has to beat this null: it needs per-position state (the T-110 own-4h-vol
+family), not a market flag, and it must survive the same frozen-holdout protocol.
+
+**Stage 2** (per-position hazard model) is NOT started automatically: stage 1's sign flip
+raises the bar, the modelling cost is real, and the fee finding stands regardless (the
+book's Ø/trade is below the 0.10 % fee — the cheaper lever is admission thinning,
+T-134 watchlist). Operator decision.
