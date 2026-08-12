@@ -12,6 +12,13 @@ from typing import Any
 
 import psutil
 
+# Load .env into the WATCHDOG's os.environ at import (T-2026-KYT-9050-138): every
+# fleet process is spawned via Popen without an env argument and therefore
+# inherits this environment. Without this line, children that do not import
+# core.config themselves start gate-less, and the watchdog's own KYTHERA_* reads
+# see only the scheduled task's registry env. core.health_monitor reaches
+# core.config only lazily inside a function — too late for spawn time.
+import core.config  # noqa: F401
 from core.fleet import FLEET
 from core.health_monitor import run_health_checks
 from core.hosted_fleet import ALL_HOSTED_SCRIPTS

@@ -1,3 +1,25 @@
+## [2026-08-12] Three fleet entries never loaded .env — the documented gate-flip path silently did nothing (T-2026-KYT-9050-138)
+
+Found live during the snapshot rollout: after `KYTHERA_CANDLE_SNAPSHOT=1` went into `.env` and the
+fleet restarted, the service came back DORMANT — its import chain never reaches `core.config`, so
+`load_dotenv()` never ran; the activation only worked via a `setx` user-env override. The same class
+affected `main_watchdog.py` (reaches `core.config` only lazily via a health-check function — too
+late for spawn-time inheritance; every child spawned via env-less `Popen` started gate-less) and
+`dashboard.py` (reads `KYTHERA_DASHBOARD_*` security keys and can start outside the watchdog).
+
+* Fix: one module-level `import core.config` in `candle_snapshot_service.py`, `main_watchdog.py`
+  and `dashboard.py`, placed BEFORE every other `core.*` import. `load_dotenv` never overrides an
+  existing process env, so operator overrides still win. The watchdog line also fixes the class for
+  every future config-less child (env inheritance at spawn).
+* New DB-free suite `backtest/test_env_loading.py` pins the contract (AST-based: module-level
+  import, ordering, and that `core/config.py` still calls `load_dotenv()` at import).
+* `backtest/test_candle_snapshot_service.py` now hard-pins `KYTHERA_SNAPSHOT_TIMEFRAMES=1h` before
+  importing the service — with the fix, the module would otherwise read the machine's live `.env`
+  in the test process.
+* Effective from the next fleet restart. AFTER that restart the `setx` user-env override
+  (`KYTHERA_CANDLE_SNAPSHOT`, `KYTHERA_SNAPSHOT_TIMEFRAMES`) should be removed so `.env` is the
+  single config source again — operator step, documented in the task.
+
 ## [2026-08-12] Stage 3: the trail-tightening study stopped itself — the live trail cannot be replayed from ticker_10s (T-2026-KYT-9050-141)
 
 Operator-ordered stage 3: on the frozen T-140 hazard signal, tighten the trailing parameters

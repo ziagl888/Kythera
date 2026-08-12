@@ -24,6 +24,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("DB_PASSWORD", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
+# Since T-2026-KYT-9050-138 the service module loads .env at import, so on a machine
+# whose .env (or user env) carries a live KYTHERA_SNAPSHOT_TIMEFRAMES the module-level
+# TIMEFRAMES would drift away from the defaults this suite asserts. Hard-pin (not
+# setdefault: load_dotenv never overrides an existing value, an inherited one would
+# win) the knob to its documented default BEFORE the import.
+os.environ["KYTHERA_SNAPSHOT_TIMEFRAMES"] = "1h"
 
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402

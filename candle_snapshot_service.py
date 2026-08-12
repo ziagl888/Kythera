@@ -85,6 +85,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
+# Load .env into os.environ BEFORE anything reads a KYTHERA_* gate: this module's
+# import chain never reaches core.config on its own, so without this line the
+# ".env + restart" operator path promised by dormant_loop's docstring silently
+# does nothing (T-2026-KYT-9050-138 — the gate flip only worked via a setx user
+# env). load_dotenv never overrides an existing process env, so an operator
+# override still wins.
+import core.config  # noqa: F401
 from core.candle_snapshot import (
     GATE_ENV,
     KIND_CANDLES,
