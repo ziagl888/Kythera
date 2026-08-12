@@ -323,7 +323,7 @@ def cmd_replay(data_dir: str, json_out: str | None) -> None:
                         "delta": delta,
                     }
                 )
-            per_cell[f"{scope}/θ{theta}"] = pd.DataFrame(rows)
+            per_cell[f"{scope}/theta={theta}"] = pd.DataFrame(rows)
 
     results: dict[str, dict] = {"fit": {}, "holdout": None}
     for key, df in per_cell.items():
@@ -334,7 +334,7 @@ def cmd_replay(data_dir: str, json_out: str | None) -> None:
     best_sum = max(s["sum"] for s in results["fit"].values())
     winner = max(
         results["fit"],
-        key=lambda k: (results["fit"][k]["sum"], float(k.rsplit("θ", 1)[1])),
+        key=lambda k: (results["fit"][k]["sum"], float(k.split("theta=")[1])),
     )
     print(f"\nFIT winner: {winner} (best sum {best_sum:+.1f}) — evaluated ONCE on holdout:")
 
