@@ -21,6 +21,11 @@ from typing import Any, Iterator
 import psutil
 from flask import Flask, Response, jsonify, request, stream_with_context
 
+# Load .env before the security module resolves KYTHERA_DASHBOARD_* below
+# (T-2026-KYT-9050-138): the dashboard can start outside the watchdog (its own
+# scheduled task path, T-2026-KYT-9050-074), where nothing else provides the
+# .env values. load_dotenv never overrides an existing process env.
+import core.config  # noqa: F401
 from core.dashboard_security import (
     TOKEN_COOKIE,
     TOKEN_HEADER,
