@@ -72,6 +72,54 @@ kill count of future TRAIL winners vs stage 1's 745.
 - Study only: wiring into bots 40/44 is a separate operator-gated deploy task after a
   PASS.
 
-## 3. Results
+## 3. Results (run 2026-08-12)
 
-*Appended after the run — absent until then by construction.*
+**Verdict: NO-EDGE. The gate is not wired — but the negative is sharper than stage 1's.**
+
+Snapshot: 5,274 trades, 48,895 instant rows (0 NaN-vol rows — the 5m pull covered every
+instant), FIT training 19,229 rows, bad share 0.545. Frozen model weights (standardized):
+`mark_pct −0.680 · vol_4h −0.444 · hours_in_trade −0.360 · drawdown_from_peak +0.110 ·
+is_long +0.153 · btc_td1 −0.052`.
+
+### FIT (10 cells, one look)
+
+| cell | Σdelta | t | | cell | Σdelta | t |
+|---|---|---|---|---|---|---|
+| **LONG-only/θ0.5** (winner) | **+537.7** | +5.57 | | ALL/θ0.5 | +438.6 | +3.80 |
+| LONG-only/θ0.6 | +150.3 | +1.86 | | ALL/θ0.6 | +90.7 | +0.93 |
+| LONG-only/θ0.7 | +54.8 | +0.84 | | ALL/θ0.7 | +40.8 | +0.52 |
+| LONG-only/θ0.9 | +22.8 | +0.98 | | ALL/θ0.8 | +41.0 | +0.72 |
+| LONG-only/θ0.8 | +0.4 | +0.01 | | ALL/θ0.9 | +24.3 | +0.83 |
+
+### HOLDOUT (LONG-only/θ0.5, evaluated once)
+
+| book | n | Σdelta | mean | t |
+|---|---|---|---|---|
+| all | 3,959 | **−269.9** | −0.068 | **−2.96** |
+| Bot 40 holdout | 2,571 | −296.6 | −0.115 | −4.10 |
+| Bot 44 | 1,388 | +26.8 | +0.019 | +0.48 |
+
+Criterion 1 (mean > 0, t ≥ 2): **failed — significantly negative.**
+Criterion 2 (Σ > 0 both books): **failed** (Bot 40 holdout −296.6).
+Criterion 3: SL_HIT mass falls 257→214 (−1,054→−834), SOURCE_CLOSED 1,186→973
+(−1,805→−1,467), the GATE bucket is cheap (1,247 exits at Ø −0.37) — and the gate still
+loses because it kills **497 future TRAIL winners** (1,867→1,370; ~−1,056 of forgone
+trail profit).
+
+### Reading — the sharpest finding of the pair
+
+**Prediction works; the action does not.** The frozen model carries real out-of-sample
+signal — instant-level holdout AUC **0.698**, driven by per-position state exactly as
+T-110 suggested. Yet acting on that signal by exiting early loses money on the same
+holdout. The trailing book's structure explains it: losers mostly die LATE (SOURCE_CLOSED
+Ø −1.5, TIME_STOP Ø −1.5), so an early exit saves only a fraction of a stop, while every
+false positive forfeits a full +2.17 trail win. With bad-share 0.545 and Ø(win) ≈
+|Ø(saved loss)| the asymmetry eats the AUC entirely. A hazard gate would need either far
+higher precision at low recall (θ0.8-0.9 cells were already ≈ 0 in FIT) or a cheaper
+action than a full exit (e.g. tightening the trail instead of closing — untested here).
+
+Both stages now agree on the null: **runtime exit overlays on this book do not pay, even
+with a genuinely predictive model.** The standing levers remain admission thinning
+(T-134 watchlist — the fee drag: book Ø/trade < 0.10 % fee) and, if anything, an
+action-side redesign (trail tightening) as a NEW pre-registered study, not a rerun of
+this one.

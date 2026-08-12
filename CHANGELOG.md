@@ -1,3 +1,27 @@
+## [2026-08-12] Stage 2: a per-position hazard model predicts the losers — and exiting early still loses (T-2026-KYT-9050-140)
+
+Operator-ordered follow-up to T-139. `tools/trailing_hazard_gate_study.py` (new) scores every open
+trade at the T-139 evaluation instants with a FIT-only numpy logistic model over per-position state
+(current mark, drawdown-from-running-peak, time-in-trade, the T-110-validated own-4h-vol via
+`core/vol_features.rolling_std_pct`, direction, BTC tape as a feature) and replays "exit at the
+first instant with P(bad) > θ" under the identical frozen protocol (pre-registration committed
+before any outcome, selection on FIT only, one holdout look).
+
+* **Verdict: NO-EDGE — and the sharper negative of the pair.** The frozen model carries real
+  out-of-sample signal (instant-level holdout AUC **0.698**), yet the FIT winner (LONG-only/θ0.5,
+  fit t=+5.57) loses on the holdout: t=**−2.96**, Bot 40 holdout −297 pp at t=−4.10. Prediction
+  works; the action does not.
+* **Why:** this book's losers die LATE (SOURCE_CLOSED/TIME_STOP Ø ≈ −1.5), so an early exit saves
+  only a fraction of a stop while every false positive forfeits a full +2.17 trail win — the gate
+  killed 497 future TRAIL winners (~1,056 pp). With bad-share 0.545 the asymmetry eats an AUC of
+  0.7 entirely; the high-precision cells (θ0.8–0.9) were already ≈ 0 in FIT.
+* Both stages now agree: **runtime exit overlays on the trailing book do not pay, even with a
+  genuinely predictive model.** Standing levers: admission thinning (T-134 watchlist; fee drag) or
+  an action-side redesign (trail tightening instead of closing) as a NEW pre-registered study.
+* New DB-free suite `backtest/test_trailing_hazard_gate_study.py` (7 tests: closed-candle as-of vol
+  lookup, running-peak/drawdown, future-mark leakage invariance, SHORT sign, logistic recovery,
+  NaN-vol no-fire, instant cap).
+
 ## [2026-08-12] A runtime LONG×tape exit gate for the trailing books, pre-registered and killed by its own holdout (T-2026-KYT-9050-139)
 
 The trailing books lose through the exits the trail cannot protect (SOURCE_CLOSED, SL_HIT,
