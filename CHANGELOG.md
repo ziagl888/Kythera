@@ -1,3 +1,28 @@
+## [2026-08-12] Stage 3: the trail-tightening study stopped itself — the live trail cannot be replayed from ticker_10s (T-2026-KYT-9050-141)
+
+Operator-ordered stage 3: on the frozen T-140 hazard signal, tighten the trailing parameters
+instead of closing (A1 retrace×0.5, A2 activation 1 %, A3 activation 0 — the losers never cross the
+2 % activation, so the variants had to touch it). `tools/trailing_tighten_study.py` (new) replays
+the bot's own `core.trailing_state.TrailingState` on real per-trade 10s tick paths (4.9 M ticks for
+the 1,930 signal-fired trades), behind a pre-registered CALIBRATION GATE: the baseline trail must
+reproduce ≥80 % of booked TRAIL exits within ±0.25 pp before any counterfactual is read.
+
+* **Verdict: NOT MEASURABLE offline — the gate stopped the study (17.2 % reproduction; 615 of 773
+  TRAIL trades never close in the replay).** Where the replay closes, it is almost exact (median
+  |diff| 0.026 pp); the misses cluster at peaks marginally above the 2 % activation, where ~0.1 pp
+  of price-source mismatch flips the arming decision. Root cause: Bot 40 trades on
+  `get_live_prices_batch` (REST), a stream that sees extremes `ticker_10s` does not record and that
+  is persisted nowhere. **A failed measurement is not a negative finding** — the stage-3 question
+  stays open.
+* The T-134 lesson (a replay that overstates is a model gap) is now a pre-registered, enforced gate
+  — it caught exactly the class of error that silently biased the old slot-budget replay. Stages
+  1/2 are unaffected (their baselines are booked outcomes).
+* Forward paths, both operator-gated: (A) persist the bots' poll prices (small live change), rerun
+  offline in ~2 weeks; (B) measure as a live A/B on the mechanics twin (T-117).
+* New DB-free suite `backtest/test_trailing_tighten_study.py` (7 tests: baseline close, tightened
+  variants incl. the never-armed-loser case, peak-survives-switch, switch timing, SHORT sign,
+  earlier-of overlay).
+
 ## [2026-08-12] Stage 2: a per-position hazard model predicts the losers — and exiting early still loses (T-2026-KYT-9050-140)
 
 Operator-ordered follow-up to T-139. `tools/trailing_hazard_gate_study.py` (new) scores every open

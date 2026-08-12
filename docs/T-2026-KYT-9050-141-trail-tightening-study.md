@@ -61,6 +61,46 @@ reduced. Anything else → NO-EDGE, nothing is wired. Additionally reported (not
 verdict-bearing): TRAIL winners killed vs stage 1 (745) and stage 2 (497), and the split
 of overlay exits into "tightened trail closed early" vs "unchanged".
 
-## 3. Results
+## 3. Results (run 2026-08-12)
 
-*Appended after the run — absent until then by construction.*
+**Verdict: NOT MEASURABLE offline — the calibration gate stopped the study, exactly as
+pre-registered. This is a failed measurement, NOT a negative finding (the
+T-070/T-2026-CU lesson: a failed measurement must never be booked as "no edge").**
+
+The frozen signal fired on 1,930 of 5,274 trades; their full 10s tick paths were pulled
+(4.9 M ticks; coverage is good — median first-tick 29 s after fill, last-tick 19 s before
+close). The baseline trail replay then failed calibration: of 773 booked-TRAIL trades,
+only **17.2 %** reproduced within ±0.25 pp (gate requires 80 %). The failure is not noise
+in the matches (median |diff| of the finite cases is 0.026 pp — where the replay closes,
+it closes almost exactly right): **615 trades never close in the replay at all.**
+
+### Root cause — the bot's price stream is not `ticker_10s`
+
+The never-closing cases cluster at booked exits of +1.8..+2.0 %, i.e. peaks marginally
+above the 2 % activation. There the arming decision hinges on ~0.1 pp: e.g. XMRUSDT
+booked +1.84 implies a live peak ≥ 2.044 %, while the symbol's entire `ticker_10s` path
+peaks at 2.03 %; conversely LISTAUSDT's path peak (2.11 %) arms the replay, yet the path
+never prints the ≤1.90 % mark the bot exited on. Bot 40 polls
+`core.live_price.get_live_prices_batch` (Binance REST) — a price stream that sees
+extremes on BOTH sides that `ticker_10s` does not record, and that is **persisted
+nowhere** (only the final `peak_pct` survives, in the position row). TRAIL exits
+concentrate exactly at the activation boundary, so the ~0.1 pp source mismatch flips the
+arm/close decision for ~80 % of them. No offline tick source can reproduce the live
+trail's decisions; any counterfactual computed on `ticker_10s` would carry this bias into
+precisely the marginal trades the variants are about.
+
+### What this buys and what follows
+
+- The T-134 lesson is now institutionalized and it worked: the same class of replay gap
+  that silently inflated the slot-budget replay was caught HERE by a pre-registered gate
+  before any counterfactual number existed. Stage 1/2 are unaffected (their baseline is
+  the booked outcome; no trail re-derivation).
+- **Forward path A (cheap, enables the offline study):** persist the bot's own poll
+  prices (one INSERT per poll batch into a `trailing_poll_prices` table, or log-file
+  append) — a small live change, operator-gated; after ~2 weeks of data this study
+  reruns with a faithful calibration.
+- **Forward path B (direct, live):** measure trail-tightening as a live A/B — the
+  mechanics twin (Bot 44) exists exactly for this (T-117); a tightened-parameter variant
+  on the signal is a money-path change and thus an operator decision.
+- The stage-3 question stays OPEN. Nothing here contradicts the stage-1/2 result that
+  full-exit overlays do not pay.
