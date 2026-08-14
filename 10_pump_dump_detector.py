@@ -28,6 +28,7 @@ from core.signal_post import (
     has_open_ai_signal,
     log_prediction,
     post_ai_signal_gated,
+    post_shadow_ai_signal,
     route_legacy_leg,
 )
 from core.trade_utils import N_PUBLISHED_TARGETS, ensure_min_tp_distance, get_hvn_and_sr_levels, thin_targets
@@ -1352,9 +1353,10 @@ def process_coin_logics(conn, symbol):
         targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
 
         # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate for the legacy EPD2
-        # direct-post leg. Default LIVE ⇒ no behaviour change. EPD2 is parked in BOTH
-        # directions → SHADOW (monitored trade instead of Cornix); the EPD3 retrain
-        # (both directions LIVE since T-037/T-085) runs separately via
+        # direct-post leg. Default LIVE ⇒ no behaviour change. Since T-2026-KYT-9050-143
+        # the SHORT leg is revived LIVE (register entry), LONG stays parked → SHADOW
+        # (monitored trade instead of Cornix); the EPD3 retrain (both directions LIVE
+        # since T-037/T-085) runs separately via
         # _emit_epd3_shadow/post_ai_signal_gated. Purely additive on the post branch (rule 4).
         # n_show=len(targets): the legacy EPD2 LIVE path stores the FULL target list
         # in ai_signals (json.dumps(targets), Cornix shows only [:3]) — the parked
@@ -1365,6 +1367,30 @@ def process_coin_logics(conn, symbol):
         if _route != LEG_LIVE:
             if _route == LEG_SHADOW:
                 conn.commit()
+            return
+
+        # T-2026-KYT-9050-143 (EPD2 SHORT revive): the legacy EPD2 leg posts to its
+        # OWN channel CH_EPD2, never to CH_PUMP_AI — Cornix hooked to the EPD2
+        # channel must not execute the EPD3 stream that shares CH_PUMP_AI.
+        # Containment (CH_AIM2_TOPN pattern): unset CH_EPD2 (0) forces shadow-only —
+        # the monitored trade is written instead of a live post, so a deploy without
+        # the .env entry posts nothing that trades.
+        _post_channel = _kcfg.CH_EPD2 if module_tag == EPD_LEGACY_TAG else AI_CHANNEL_ID
+        if not _post_channel:
+            post_shadow_ai_signal(
+                conn,
+                module_tag,
+                symbol,
+                best_direction,
+                float(best_prob),
+                entry1,
+                entry2,
+                sl,
+                targets,
+                n_show=len(targets),
+                legacy_tag=EPD_LEGACY_TAG,
+            )
+            conn.commit()
             return
 
         lev = get_max_leverage(symbol, 20)
@@ -1388,16 +1414,16 @@ def process_coin_logics(conn, symbol):
         chart_buf = generate_minichart_image(symbol, minutes=240)
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (AI_CHANNEL_ID, cornix_msg)
+                "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (_post_channel, cornix_msg)
             )
             if chart_buf:
                 cur.execute(
                     "INSERT INTO telegram_outbox (channel_id, message, image_path) VALUES (%s, %s, %s)",
-                    (AI_CHANNEL_ID, html_caption, chart_buf),
+                    (_post_channel, html_caption, chart_buf),
                 )
             else:
                 cur.execute(
-                    "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (AI_CHANNEL_ID, html_caption)
+                    "INSERT INTO telegram_outbox (channel_id, message) VALUES (%s, %s)", (_post_channel, html_caption)
                 )
 
             cur.execute(
