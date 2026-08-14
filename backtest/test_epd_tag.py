@@ -236,6 +236,52 @@ def test_epd_passes_the_legacy_tag_into_the_shadow_log():
     )
 
 
+# ------------------------------------------------- T-143 channel routing
+
+
+def test_t143_legacy_live_branch_posts_to_ch_epd2_not_ch_pump_ai():
+    """T-2026-KYT-9050-143: the revived EPD2 SHORT leg posts to its OWN channel.
+
+    Cornix hooked to CH_EPD2 must never receive the EPD3 stream sharing
+    CH_PUMP_AI — so the legacy live branch selects CH_EPD2 for the EPD2 tag,
+    and none of its telegram_outbox inserts may use AI_CHANNEL_ID anymore.
+    """
+    assert re.search(
+        r"_post_channel\s*=\s*_kcfg\.CH_EPD2\s+if\s+module_tag\s*==\s*EPD_LEGACY_TAG\s+else\s+AI_CHANNEL_ID", SRC
+    ), "the legacy live branch no longer routes the EPD2 tag to CH_EPD2"
+    # The live branch spans from the channel selection to the prediction-master
+    # archive write; inside it every outbox insert must use _post_channel.
+    start = SRC.index("_post_channel = _kcfg.CH_EPD2")
+    end = SRC.index("ml_predictions_master", start)
+    live_branch = SRC[start:end]
+    assert "(_post_channel, cornix_msg)" in live_branch, "the Cornix message no longer posts via _post_channel"
+    assert "(_post_channel, html_caption" in live_branch, "the caption no longer posts via _post_channel"
+    assert "AI_CHANNEL_ID" not in live_branch.replace(
+        "_post_channel = _kcfg.CH_EPD2 if module_tag == EPD_LEGACY_TAG else AI_CHANNEL_ID", ""
+    ), (
+        "a write in the legacy live branch still targets AI_CHANNEL_ID (CH_PUMP_AI) — "
+        "an EPD2 live signal would land in the EPD3 channel"
+    )
+
+
+def test_t143_unset_ch_epd2_forces_shadow_containment():
+    """Unset CH_EPD2 (0) must write a monitored shadow trade and return BEFORE
+    any outbox/ai_signals write — a deploy without the .env entry posts nothing
+    that trades (CH_AIM2_TOPN containment pattern)."""
+    guard = SRC.find("if not _post_channel:")
+    assert guard != -1, "the unset-CH_EPD2 containment guard is gone"
+    # Between the guard and the live outbox write sit the shadow write, the
+    # commit and the early return — in that order, nothing else trading.
+    live_insert = SRC.find("INSERT INTO telegram_outbox", guard)
+    assert live_insert != -1, "no live outbox write after the containment guard"
+    block = SRC[guard:live_insert]
+    for needle in ("post_shadow_ai_signal(", "conn.commit()", "return"):
+        assert needle in block, f"containment lost its '{needle}' step"
+    assert block.index("post_shadow_ai_signal(") < block.index("conn.commit()") < block.index("return"), (
+        "containment steps out of order — the shadow write must commit before the early return"
+    )
+
+
 if __name__ == "__main__":
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_") and callable(_fn):

@@ -77,6 +77,12 @@ CH_UFI1 = _ch("CH_UFI1")
 CH_PUMP_MARKET = _ch("CH_PUMP_MARKET")
 CH_PUMP_AI = _ch("CH_PUMP_AI")
 CH_PUMP_MAIN = _ch("CH_PUMP_MAIN")
+# EPD2 revive channel (T-2026-KYT-9050-143): the legacy EPD2 leg of bot 10
+# posts its LIVE signals here instead of CH_PUMP_AI — Cornix on the EPD2
+# channel must not execute the EPD3 stream that shares CH_PUMP_AI (~900 open
+# trades). Plain _ch (0 = unset): an unset channel forces shadow-only in
+# 10_pump_dump_detector.py — never silently falls back onto CH_PUMP_AI (rule 4).
+CH_EPD2 = _ch("CH_EPD2")
 CH_MIS_8H = _ch("CH_MIS_8H")
 CH_MIS_24H = _ch("CH_MIS_24H")
 CH_MIS_72H = _ch("CH_MIS_72H")

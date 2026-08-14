@@ -129,15 +129,33 @@ def test_t033_parked_legs_are_shadow():
     # shadow. EPD3 LONG is LIVE promoted per T-037 (operator, see
     # test_t037_epd3_long_atb2_long_deployed); EPD3 SHORT's T-033 park was LIFTED on
     # 2026-08-03 (T-2026-KYT-9050-085, operator) — pinned in
-    # test_t085_epd3_short_unparked_live.
+    # test_t085_epd3_short_unparked_live. EPD2 SHORT's park was LIFTED on
+    # 2026-08-15 (T-2026-KYT-9050-143, operator) — pinned in
+    # test_t143_epd2_short_revived_live; EPD2 LONG stays in the full park below.
     assert sg.is_shadow("RUB3", "LONG")
     # Completely → SHADOW (both directions).
-    for tag in ("EPD2", "RUB2", "SRA1", "ABR2", "BB2_4H", "BR1D", "MIS2-8H"):
+    for tag in ("RUB2", "SRA1", "ABR2", "BB2_4H", "BR1D", "MIS2-8H"):
         assert sg.is_shadow(tag, "LONG"), tag
         assert sg.is_shadow(tag, "SHORT"), tag
     # BR1Hv2 = the current 1h BR tag (bot 7, mixed-case) — parked case-insensitively.
     assert sg.leg_status("BR1Hv2", "LONG") == sg.SHADOW
     assert sg.leg_status("BR1Hv2", "SHORT") == sg.SHADOW
+
+
+def test_t143_epd2_short_revived_live():
+    # T-2026-KYT-9050-143 (operator decision Michi, 2026-08-15): the T-033 park of
+    # EPD2 SHORT is lifted — SHADOW→LIVE, posting under tag EPD2 to its OWN channel
+    # CH_EPD2 (routing in 10_pump_dump_detector.py, never CH_PUMP_AI). The register
+    # entry is an explicit LIVE (RUB1 defence-in-depth pattern).
+    assert sg.leg_status("EPD2", "SHORT") == sg.LIVE
+    assert sg.is_live("EPD2", "SHORT")
+    assert not sg.is_shadow("EPD2", "SHORT")
+    # Case-normalised lookup keeps working on the explicit entry.
+    assert sg.leg_status("epd2", "short") == sg.LIVE
+    # The LONG leg stays parked — the revive is strictly one-directional.
+    assert sg.leg_status("EPD2", "LONG") == sg.SHADOW
+    assert sg.is_shadow("EPD2", "LONG")
+    assert not sg.is_live("EPD2", "LONG")
 
 
 def test_t033_per_direction_parks_keep_the_other_leg_live():

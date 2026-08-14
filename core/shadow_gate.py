@@ -256,9 +256,18 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # EPD1 emitter anymore → documentary; the park works via the EPD2 full block.
     ("EPD1", "LONG"): SHADOW,
     # ── Full →SHADOW (both legs), audit: both directions net-negative ──
-    # EPD2 (Bot 10, legacy pump/dump direct post): both legs parked.
+    # EPD2 (Bot 10, legacy pump/dump direct post): T-033 parked BOTH legs.
+    # SHORT revived → LIVE (T-2026-KYT-9050-143, operator decision Michi
+    # 2026-08-15): since the park the shadow SHORT leg realised +4.5%/trade
+    # over 30d (n=91, WR 54%) and ranks first in bot_regime_performance for
+    # the current TRANSITION regime — exactly the revive case the register
+    # anticipates. Explicit LIVE entry for defence-in-depth (RUB1 pattern):
+    # the revived leg must never accidentally rejoin the LONG park below.
+    # Live posting goes to CH_EPD2, NOT CH_PUMP_AI — routing at the emission
+    # point in 10_pump_dump_detector.py (unset CH_EPD2 ⇒ shadow containment).
+    # LONG stays parked (shadow −2.0%/trade, WR ~30% over the same window).
     ("EPD2", "LONG"): SHADOW,
-    ("EPD2", "SHORT"): SHADOW,
+    ("EPD2", "SHORT"): LIVE,
     # MIS2-8H (Bot 11): both legs parked (8h horizon is negative anyway per study).
     ("MIS2-8H", "LONG"): SHADOW,
     ("MIS2-8H", "SHORT"): SHADOW,
