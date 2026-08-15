@@ -268,8 +268,17 @@ def post_shadow_ai_signal(
     n_show: int = 3,
     dedup_hours: int = 4,
     legacy_tag: str | None = None,
+    expiry_hours: int | None = None,
+    lev: str | None = None,
 ) -> bool:
     """Monitored-but-unposted shadow trade (T-2026-CU-9050-125).
+
+    ``expiry_hours``/``lev`` (T-2026-KYT-9050-146, additive — default ``None``
+    keeps the INSERT byte-identical for every existing caller): a shadow leg
+    with a hard time-exit (the monitor closes it as ``HORIZON_TIMEOUT`` at the
+    horizon end) can now carry that horizon on its own row, and ``lev`` records
+    the operator's intended live leverage profile as metadata — the shadow
+    trade itself is unlevered price tracking either way.
 
     Writes the ``ai_signals`` row and — if ``config.CH_SHADOW_TEST``
     is set (default 0 = off) — ONE deliberately non-Cornix-parsable preview
@@ -304,8 +313,8 @@ def post_shadow_ai_signal(
     with conn.cursor() as cur:
         cur.execute(
             """INSERT INTO ai_signals (symbol, price, model, direction, confidence,
-                                       entry1, entry2, sl, targets)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                       entry1, entry2, sl, targets, expiry_hours, lev)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 symbol,
                 float(entry1),
@@ -316,6 +325,8 @@ def post_shadow_ai_signal(
                 float(entry2),
                 float(sl),
                 json.dumps(tps),
+                int(expiry_hours) if expiry_hours is not None else None,
+                lev,
             ),
         )
     log_prediction(

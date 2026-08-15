@@ -83,6 +83,10 @@ SCANNERS: tuple[ScannerSpec, ...] = (
     ScannerSpec("38_ai_skw1_bot.py", "SKW1_BOT", WEEKLY, minute=31, hour=0, weekday=0),
     # 39: Monday 00:37 UTC weekly cross-sectional rotation (K2, XSM1 + XSR1).
     ScannerSpec("39_ai_xsm1_bot.py", "XSM1_BOT", WEEKLY, minute=37, hour=0, weekday=0),
+    # 47: hourly at minute 41 (pump-continuation long, T-145 candidate,
+    # shadow-only — T-2026-KYT-9050-146). Minute 41 keeps ≥4 min distance to
+    # the weekly :37 sibling, well inside the CATCH_UP grace.
+    ScannerSpec("47_ai_pcl1_bot.py", "PCL1_BOT", HOURLY, minute=41),
 )
 
 # Script names the runner hosts. Registered in core/hosted_fleet.py, which owns
