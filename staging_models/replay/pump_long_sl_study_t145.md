@@ -51,6 +51,17 @@ Unlevered numbers. With a 25% stop, liquidation must sit beyond the stop:
 is a low-leverage, wide-stop, one-day trade or it is nothing. At 2x, the
 candidate cell is ≈ +21% on margin per event, ~6 events/week fleet-wide.
 
+## Review notes (z-code-reviewer, disclosed per findings M1/M2/L5)
+
+- The tool's printed t is computed on GROSS returns; rule 2 demands net-of-fee
+  t. Recomputed net: SL25 t≈2.24, SL30 t≈2.11 — both still ≥ 2.0, the
+  candidate verdict stands; failing cells fail a fortiori.
+- The SL-hit column misses a hit landing on the LAST horizon candle (exit-time
+  comparison edge case): the reported 31%/20% hit rates are a floor.
+- 54 cells were evaluated and two (adjacent, highly correlated) pass at
+  t≈2.1–2.3 — the family-wise error rate is not adjusted for; CANDIDATE-not-
+  deploy plus the ≥90d re-run is the mitigation.
+
 ## Caveats (why CANDIDATE, not deployment)
 
 - **n=55, ~9 weeks, one regime** — and the motivating examples sit inside the
