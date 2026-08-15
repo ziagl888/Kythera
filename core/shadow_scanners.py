@@ -8,12 +8,12 @@
 # check) and the same load_coins/read_candles path, so one runner can drive all
 # four on their existing schedules.
 #
-# The scan logic itself is NOT moved: the runner imports the four bot modules
+# The scan logic itself is NOT moved: the runner imports the hosted bot modules
 # unchanged (they already separate ``run_scan()`` from ``main()``) and calls
 # ``run_scan()`` when a slot is due. What lives here is only the part both the
 # runner and core/bot_catalog.py need to agree on:
 #
-#   * the roster — which script names the runner hosts. The four scripts keep
+#   * the roster — which script names the runner hosts. The hosted scripts keep
 #     their identity as *bots*: report mapping (core/bot_catalog.py) and the
 #     operator's park markers (control/parked/<script>.py) stay per bot, they
 #     just no longer own a process.
@@ -28,11 +28,11 @@ from datetime import datetime, timedelta
 RUNNER_SCRIPT = "45_shadow_scanner_runner.py"
 
 # How late a slot may still run. The runner dispatches SEQUENTIALLY, so a long
-# scan can push its successor past its own minute — on Monday 00:xx all four
-# slots sit within 14 minutes of each other, and SKW1's weekly 15m sweep is the
+# scan can push its successor past its own minute — on Monday 00:xx all hosted
+# slots sit within 18 minutes of each other, and SKW1's weekly 15m sweep is the
 # slow one. Without a grace window a sibling overrun would silently DROP a slot
 # (for SKW1/XSM1 that means skipping a whole week); with it the scan runs late
-# instead. Late is harmless for all four: they read closed candles as-of now,
+# instead. Late is harmless for all hosted scanners: they read closed candles as-of now,
 # and every trigger window (day-3 age band, 4h bar, weekly rebalance) is far
 # wider than this grace. Must stay below the tightest slot spacing (LIS1: 60
 # min), otherwise a delayed slot could overlap the next one.
@@ -83,6 +83,10 @@ SCANNERS: tuple[ScannerSpec, ...] = (
     ScannerSpec("38_ai_skw1_bot.py", "SKW1_BOT", WEEKLY, minute=31, hour=0, weekday=0),
     # 39: Monday 00:37 UTC weekly cross-sectional rotation (K2, XSM1 + XSR1).
     ScannerSpec("39_ai_xsm1_bot.py", "XSM1_BOT", WEEKLY, minute=37, hour=0, weekday=0),
+    # 47: hourly at minute 41 (pump-continuation long, T-145 candidate,
+    # shadow-only — T-2026-KYT-9050-146). Minute 41 keeps ≥4 min distance to
+    # the weekly :37 sibling, well inside the CATCH_UP grace.
+    ScannerSpec("47_ai_pcl1_bot.py", "PCL1_BOT", HOURLY, minute=41),
 )
 
 # Script names the runner hosts. Registered in core/hosted_fleet.py, which owns

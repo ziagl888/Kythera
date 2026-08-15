@@ -214,6 +214,15 @@ _LIFECYCLE: dict[tuple[str, str], str] = {
     # separate gate, operator matter). Bot 36 NEVER posts live (fail-safe: if the
     # leg is not SHADOW, the bot stays silent — the rule has no edge).
     ("LIS1", "SHORT"): SHADOW,
+    # PCL1 (T-2026-KYT-9050-146): pump-continuation LONG — the T-145 CANDIDATE
+    # (>=75%/24h pumper, hold 24h, SL 25%) collecting forward evidence. Bot 47
+    # NEVER posts live (fail-safe: if the leg is not SHADOW, the bot stays
+    # silent — n=55/one regime is a candidate, not an edge). Promotion needs
+    # the >=90d re-run AND the leverage math revisited: the operator's intended
+    # live profile is 10x cross, but cap_leverage_to_sl allows 2x at SL 25% —
+    # at 10x the stop sits far beyond the isolated liquidation and a -25% move
+    # costs 2.5x the position margin from the cross account.
+    ("PCL1", "LONG"): SHADOW,
     # TSM1 (K1, SHORT), SKW1 (K7, LONG+SHORT), XSM1 (K2, LONG) and XSR1 (K2,
     # SHORT) were promoted to LIVE on 2026-07-20 (T-2026-CU-9050-183, operator
     # decision Michi from the 14:00 report review) — they therefore are NOT listed

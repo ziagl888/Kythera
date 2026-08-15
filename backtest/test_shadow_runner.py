@@ -59,7 +59,7 @@ def _import_runner():
 
 runner = _import_runner()
 
-LIS1, TSM1, SKW1, XSM1 = ss.SCANNERS
+LIS1, TSM1, SKW1, XSM1, PCL1 = ss.SCANNERS
 
 
 def _spec(script: str) -> ss.ScannerSpec:
@@ -86,12 +86,15 @@ def _modules(**boom: bool) -> dict[str, _FakeScan]:
 # ── 1. Roster ────────────────────────────────────────────────────────────────
 
 
-def test_roster_covers_exactly_the_four_consolidated_bots():
+def test_roster_covers_exactly_the_hosted_bots():
+    # 36-39 consolidated by T-133; 47 (PCL1, T-146) joined as the fifth hourly
+    # scanner instead of a new fleet process.
     assert ss.HOSTED_SCRIPTS == (
         "36_ai_lis1_bot.py",
         "37_ai_tsm1_bot.py",
         "38_ai_skw1_bot.py",
         "39_ai_xsm1_bot.py",
+        "47_ai_pcl1_bot.py",
     )
     assert ss.RUNNER_SCRIPT == "45_shadow_scanner_runner.py"
 
@@ -287,14 +290,15 @@ def test_only_the_due_scanner_runs():
     assert modules["39_ai_xsm1_bot.py"].calls == 0
 
 
-def test_monday_cluster_dispatches_all_four_in_slot_order():
+def test_monday_cluster_dispatches_all_hosted_in_slot_order():
     # Monday 2026-08-10: 00:23 LIS1, 00:29 TSM1 (hour 0 is a 4h hour),
-    # 00:31 SKW1, 00:37 XSM1 — the one tick where all four collide.
+    # 00:31 SKW1, 00:37 XSM1, 00:41 PCL1 (T-146) — the one tick where all
+    # hosted scanners collide.
     modules = _modules()
     state = ss.initial_slots(datetime.datetime(2026, 8, 10, 0, 22, tzinfo=UTC))
-    for minute in (23, 29, 31, 37):
+    for minute in (23, 29, 31, 37, 41):
         state = _dispatch(datetime.datetime(2026, 8, 10, 0, minute, 2, tzinfo=UTC), modules, state=state)
-    assert [modules[s.script].calls for s in ss.SCANNERS] == [1, 1, 1, 1]
+    assert [modules[s.script].calls for s in ss.SCANNERS] == [1, 1, 1, 1, 1]
 
 
 def test_a_scan_is_not_repeated_within_its_slot():
@@ -397,12 +401,12 @@ def test_one_exploding_scan_does_not_take_the_others_down():
     assert modules["39_ai_xsm1_bot.py"].calls == 1
 
 
-def test_all_four_exploding_still_leaves_the_loop_alive():
+def test_all_hosted_exploding_still_leaves_the_loop_alive():
     modules = _modules(**{s.script: True for s in ss.SCANNERS})
     state = ss.initial_slots(datetime.datetime(2026, 8, 10, 0, 22, tzinfo=UTC))
-    for minute in (23, 29, 31, 37):
+    for minute in (23, 29, 31, 37, 41):
         state = _dispatch(datetime.datetime(2026, 8, 10, 0, minute, 2, tzinfo=UTC), modules, state=state)
-    assert [m.calls for m in modules.values()] == [1, 1, 1, 1]
+    assert [m.calls for m in modules.values()] == [1, 1, 1, 1, 1]
 
 
 def test_a_failed_scan_is_not_retried_in_a_hot_loop():
@@ -476,8 +480,8 @@ def test_parking_the_runner_marks_all_four_inactive():
 
 
 def test_runner_reports_the_families_of_the_bots_it_hosts():
-    # Roster order (36, 37, 38, 39), each bot's own family order preserved.
-    assert bc.families_for_script(ss.RUNNER_SCRIPT) == ["LIS", "TSM", "SKW", "XSM", "XSR"]
+    # Roster order (36, 37, 38, 39, 47), each bot's own family order preserved.
+    assert bc.families_for_script(ss.RUNNER_SCRIPT) == ["LIS", "TSM", "SKW", "XSM", "XSR", "PCL"]
 
 
 def test_expand_hosted_is_a_no_op_without_the_runner():
