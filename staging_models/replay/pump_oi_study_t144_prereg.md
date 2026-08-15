@@ -38,6 +38,19 @@ Mechanics — all conditioned on the pump filter; each is read BOTH ways
 | M2 | +OI-ROLLOVER | 24h OI build `peak_24h/oi_24h_ago − 1 ≥ +25%` AND off-peak `oi/peak_24h − 1 ≤ −5%` (money leaving after the build — the APR/BR chart pattern) |
 | M3 | +OI-STALL-4h | `doi_4h ≤ 0%` (pump no longer fed by new positions — T-096 divergence, pump-conditioned) |
 
+## Extension (registered 2026-08-15, still before the first outcome run)
+
+Operator follow-up (Michi, BLUAI example): after the blow-off collapses, does
+the coin pump back or keep falling? Two additive changes, frozen before any
+outcome was computed:
+
+- **Forward horizons extended** to 4h / 8h / 24h / 48h / 72h for all mechanics.
+- **M4 POST-COLLAPSE:** trailing-48h price peak was itself a pump
+  (`peak_48h / px_48h_ago − 1 ≥ +25%`) AND price now sits `≤ −40%` off that
+  peak. Both sides: LONG = bounce-back, SHORT = continuation. M4 events are
+  not currently-pumped coins, so verdict rule 4 (beat the pump-only control)
+  does not apply to M4 — rules 1–3 do.
+
 ## Pre-registered verdict rule
 
 A mechanic/side/threshold cell is a **CANDIDATE** only if ALL hold:
