@@ -147,9 +147,20 @@ def process_symbol(conn, symbol: str) -> None:
         return
 
     # 3) Entry from the last CLOSED 5m candle — same source as the study's
-    #    path engine. Missing feed => void, never a fallback fill.
+    #    path engine. Missing OR STALE feed => void, never a fallback fill:
+    #    the trigger feed (oi_5m) and the entry feed (candles) are separate,
+    #    so a dead candle ingest must not stamp an hours-old close as entry
+    #    while the OI scan still fires (review T-146 M2).
     df = read_candles(conn, symbol, "5m", include_forming=False, columns=("open_time", "close"), limit=2)
     if df is None or not len(df):
+        return
+    last_open = df["open_time"].iloc[-1]
+    last_open = last_open.to_pydatetime() if hasattr(last_open, "to_pydatetime") else last_open
+    if last_open.tzinfo is None:
+        last_open = last_open.replace(tzinfo=datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if (now - last_open) > datetime.timedelta(minutes=MAX_STALE_MIN):
+        logger.warning(f"{symbol}: last closed 5m candle is stale ({last_open}) — event voided.")
         return
     entry = float(df["close"].iloc[-1])
     if entry <= 0:
@@ -209,6 +220,20 @@ def run_scan() -> None:
 
 def main() -> None:
     logger.info("=== 🚀 AI PCL1 BOT (Pump-Continuation Long, T-145) STARTED — SHADOW-ONLY ===")
+    # Standalone debug path only — in production runner 45 bootstraps this
+    # table once for all hosted scanners (LIS1-main parity).
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS trade_cooldowns (
+                module VARCHAR(50), coin VARCHAR(20), direction VARCHAR(10),
+                last_posted_at TIMESTAMP WITH TIME ZONE,
+                PRIMARY KEY (module, coin, direction)
+            );
+        """)
+    conn.commit()
+    conn.close()
+
     while True:
         now = datetime.datetime.now(datetime.timezone.utc)
         if now.minute == SCAN_MINUTE:

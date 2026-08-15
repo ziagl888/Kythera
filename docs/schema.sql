@@ -402,7 +402,8 @@ CREATE TABLE public.ai_signals (
     entry2 real,
     entry1 real,
     entry_filled boolean DEFAULT true,
-    expiry_hours integer
+    expiry_hours integer,
+    lev text
 );
 
 

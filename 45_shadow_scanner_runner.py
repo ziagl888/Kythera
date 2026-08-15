@@ -1,15 +1,16 @@
-# 45_shadow_scanner_runner.py — one process for the four rule-based shadow scanners.
+# 45_shadow_scanner_runner.py — one process for the rule-based shadow scanners.
 """
 T-2026-KYT-9050-133 (fleet consolidation, cluster B). Bots 36 (LIS1), 37 (TSM1),
 38 (SKW1) and 39 (XSM1/XSR1) were four permanent Python interpreters — each with
 its own pandas/numpy import and its own minconn-2 DB pool — for a few minutes of
 work per WEEK: hourly at minute 23, minute 29 of every 4h hour, Monday 00:31 and
-Monday 00:37 UTC. This process drives all four on exactly those schedules and
-replaces their four fleet entries with one.
+Monday 00:37 UTC. This process drives them all on exactly those schedules and
+replaces their fleet entries with one; later scanners (47/PCL1, T-146) join via
+core/shadow_scanners.SCANNERS instead of new fleet entries.
 
 Behaviour-neutral by construction
 ---------------------------------
-The four bot modules are NOT modified. They already separate ``run_scan()`` (the
+The hosted bot modules are NOT modified. They already separate ``run_scan()`` (the
 scan core) from ``main()`` (the loop that owns the schedule), so this runner
 imports them via importlib — the pattern from ``44_trailing_free_bot.py`` — and
 calls ``run_scan()`` when a slot is due. Signal logic, posting, cooldowns and
@@ -39,8 +40,8 @@ Per-bot isolation
   ``python -c "from core.process_control import park; park('37_ai_tsm1_bot.py')"``
   silences TSM1 alone and leaves the other three scanning. Parking the runner
   itself (``45_shadow_scanner_runner.py``, the dashboard's stop button) still
-  stops all four, which is what parking a process means. Note the dashboard's
-  per-bot buttons follow the fleet list, so the four bots no longer have their
+  stops them all, which is what parking a process means. Note the dashboard's
+  per-bot buttons follow the fleet list, so the hosted bots no longer have their
   own row there — the marker file above is their park path.
 
 Logging
@@ -48,7 +49,7 @@ Logging
 The bot modules do ``logger = logging.getLogger(__name__)``, so importing them
 under their old log prefixes ("LIS1_BOT", …) plus a ``%(name)s`` format keeps
 every scan line byte-identical to what the standalone bots wrote. Only the
-destination changes: all four now log into this process's log file.
+destination changes: all hosted scanners now log into this process's log file.
 
 Watchdog: start_delay=311.
 """
@@ -122,7 +123,7 @@ def load_scanners() -> dict[str, ModuleType]:
 
 
 def ensure_cooldown_table() -> None:
-    """The ``trade_cooldowns`` DDL all four bots ran at startup — now once.
+    """The ``trade_cooldowns`` DDL each hosted bot ran at startup — now once.
 
     Verbatim the statement from their ``main()``; ``IF NOT EXISTS`` makes it a
     no-op against the live table. A DB that is down here kills the runner, just

@@ -274,11 +274,14 @@ def post_shadow_ai_signal(
     """Monitored-but-unposted shadow trade (T-2026-CU-9050-125).
 
     ``expiry_hours``/``lev`` (T-2026-KYT-9050-146, additive — default ``None``
-    keeps the INSERT byte-identical for every existing caller): a shadow leg
-    with a hard time-exit (the monitor closes it as ``HORIZON_TIMEOUT`` at the
-    horizon end) can now carry that horizon on its own row, and ``lev`` records
-    the operator's intended live leverage profile as metadata — the shadow
-    trade itself is unlevered price tracking either way.
+    keeps every existing caller ROW-equivalent: both columns land NULL, exactly
+    what the pre-extension INSERT produced via the column defaults; the
+    statement itself now names both columns, which exist in docs/schema.sql and
+    via the monitor's ADD COLUMN IF NOT EXISTS bootstrap): a shadow leg with a
+    hard time-exit (the monitor closes it as ``HORIZON_TIMEOUT`` at the horizon
+    end) can now carry that horizon on its own row, and ``lev`` records the
+    operator's intended live leverage profile as metadata — the shadow trade
+    itself is unlevered price tracking either way.
 
     Writes the ``ai_signals`` row and — if ``config.CH_SHADOW_TEST``
     is set (default 0 = off) — ONE deliberately non-Cornix-parsable preview

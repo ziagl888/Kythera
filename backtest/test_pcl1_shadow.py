@@ -124,6 +124,76 @@ def test_post_shadow_ai_signal_defaults_keep_null_expiry_and_lev():
     assert params[-2] is None and params[-1] is None
 
 
+# ------------------------------------------- behavioural fail-safe (M3)
+
+
+def _fresh_candles(minutes_old: float = 3.0, close: float = 100.0):
+    import datetime
+
+    import pandas as pd
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    t1 = now - datetime.timedelta(minutes=minutes_old)
+    return pd.DataFrame({"open_time": [t1 - datetime.timedelta(minutes=5), t1], "close": [close, close]})
+
+
+def _wire(monkeypatch, *, leg=None, cooldown=False, has_open=False, candles="fresh"):
+    """Patch bot-module globals with DB-free fakes; collect shadow posts."""
+    posts: list[tuple] = []
+    monkeypatch.setattr(pcl, "shadow_posting_enabled", lambda: True)
+    monkeypatch.setattr(pcl, "leg_status", lambda *_: leg if leg is not None else sg.SHADOW)
+    monkeypatch.setattr(pcl, "check_cooldown", lambda *a, **k: cooldown)
+    monkeypatch.setattr(pcl, "has_open_ai_signal", lambda *a, **k: has_open)
+    use_fresh = isinstance(candles, str) and candles == "fresh"
+    monkeypatch.setattr(pcl, "read_candles", lambda *a, **k: _fresh_candles() if use_fresh else candles)
+    monkeypatch.setattr(pcl, "update_cooldown", lambda *a, **k: None)
+
+    def _post(conn, tag, sym, direction, conf, e1, e2, sl, tgts, **kw):
+        posts.append((tag, sym, direction, e1, sl, tuple(tgts), kw))
+        return True
+
+    monkeypatch.setattr(pcl, "post_shadow_ai_signal", _post)
+    return posts
+
+
+def test_process_symbol_posts_the_candidate_cell_with_expiry_and_lev(monkeypatch):
+    posts = _wire(monkeypatch)
+    pcl.process_symbol(object(), "ACEUSDT")
+    assert len(posts) == 1
+    tag, sym, direction, e1, sl, tgts, kw = posts[0]
+    assert (tag, sym, direction) == ("PCL1", "ACEUSDT", "LONG")
+    assert e1 == 100.0 and sl == 75.0 and tgts == (150.0,)
+    assert kw["expiry_hours"] == 24 and kw["lev"] == "10x"
+
+
+def test_process_symbol_stays_silent_when_leg_is_not_shadow(monkeypatch):
+    # THE fail-safe: a promoted/reconfigured leg must silence the bot, never
+    # turn it into a live poster.
+    posts = _wire(monkeypatch, leg=sg.LIVE)
+    pcl.process_symbol(object(), "ACEUSDT")
+    assert posts == []
+
+
+def test_process_symbol_skips_on_cooldown_and_open_trade(monkeypatch):
+    posts = _wire(monkeypatch, cooldown=True)
+    pcl.process_symbol(object(), "ACEUSDT")
+    assert posts == []
+    posts2 = _wire(monkeypatch, has_open=True)
+    pcl.process_symbol(object(), "ACEUSDT")
+    assert posts2 == []
+
+
+def test_process_symbol_voids_on_missing_or_stale_entry_candle(monkeypatch):
+    posts = _wire(monkeypatch, candles=None)  # missing feed => void (P0.12)
+    pcl.process_symbol(object(), "ACEUSDT")
+    assert posts == []
+    # Stale feed (older than MAX_STALE_MIN): the OI trigger may still fire
+    # while the candle ingest is dead — no hours-old close as entry.
+    posts2 = _wire(monkeypatch, candles=_fresh_candles(minutes_old=pcl.MAX_STALE_MIN + 5))
+    pcl.process_symbol(object(), "ACEUSDT")
+    assert posts2 == []
+
+
 if __name__ == "__main__":
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_") and callable(_fn):
