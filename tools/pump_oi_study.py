@@ -156,7 +156,7 @@ def report_side(name: str, side: str, ev: pd.DataFrame, control: pd.DataFrame | 
         out[f"net_{h}h"] = round(net, 3)
         out[f"t_{h}h"] = round(tstat, 2)
     # Weekly stability, 4h horizon (pre-registered rule 3).
-    wk = ev.set_index("ts")[f"fwd_4h"].mul(sign).groupby(pd.Grouper(freq="W")).mean().dropna()
+    wk = ev.set_index("ts")["fwd_4h"].mul(sign).groupby(pd.Grouper(freq="W")).mean().dropna()
     if len(wk):
         pos = (wk > 0).mean()
         out["weeks_pos"] = round(pos, 2)
