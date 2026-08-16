@@ -86,8 +86,8 @@ def _signed_move_pct(sign: float, entry: float, price: float) -> float:
 # stay for exactly the same reason: `[:3]` is identity on rows written after the
 # respective deploy and still the posted three on every row before it. This table
 # is therefore no longer a description of live bot behaviour but a permanent
-# decoder for the archive. That is not a reason to prune it: ~2,400 AIM2 and ~8,000
-# ROM1 closed rows still carry the long ladders, and every report that reads them
+# decoder for the archive. That is not a reason to prune it: ~2,400 AIM2, ~8,000
+# ROM1 and the pre-T-147 EPD2 closed rows still carry the long ladders, and every report that reads them
 # needs this trim to keep the position model at 3 legs.
 PUBLISHED_TARGET_COUNT: dict[str, int] = {
     "ROM1": 3,

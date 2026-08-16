@@ -1370,9 +1370,10 @@ def process_coin_logics(conn, symbol):
         # (monitored trade instead of Cornix); the EPD3 retrain (both directions LIVE
         # since T-037/T-085) runs separately via
         # _emit_epd3_shadow/post_ai_signal_gated. Purely additive on the post branch (rule 4).
-        # n_show=len(targets): the legacy EPD2 LIVE path stores the FULL target list
-        # in ai_signals (json.dumps(targets), Cornix shows only [:3]) — the parked
-        # shadow mirrors that for audit continuity with the historical EPD2 series.
+        # n_show=len(targets): since the T-147 thin+cap the ladder is at most the
+        # published 3, so stored == published — n_show=len(targets) is now identity
+        # with [:3]; rows from before the cap keep their long ladders (decoder:
+        # PUBLISHED_TARGET_COUNT in core/realized_pnl.py).
         _route = route_legacy_leg(
             conn, module_tag, best_direction, symbol, best_prob, entry1, entry2, sl, targets, n_show=len(targets)
         )
