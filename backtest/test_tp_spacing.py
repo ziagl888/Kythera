@@ -86,17 +86,20 @@ def test_short_side_measures_distance_downwards():
     assert out == [98.8, 97.4, 96.0], out
 
 
-def test_never_thins_when_the_pool_is_not_deeper_than_the_ladder():
-    """The operator's condition: only skip when not everything gets published.
-
-    Bot 10's EPD2 legacy path and bots 7/18/24/25 publish `len(targets)` — for them
-    the pool IS the ladder, and thinning would delete a target with nothing to put
-    in its place.
+def test_thins_even_when_the_pool_is_not_deeper_than_the_ladder():
+    """T-2026-KYT-9050-147 (operator decision Michi 2026-08-16, supersedes the
+    T-098 condition): a too-close target is dropped even without a replacement
+    — two real TPs beat three clustered ones. Until T-147 a
+    ``len(candidates) <= keep`` guard passed these pools through untouched,
+    which let dense ladders reach Cornix on pool-of-3 signals (EPD3/TSM1/AIM2)
+    and on the whole EPD2 legacy leg (9 of 10 live signals under 1 % gap).
     """
     tight = [100.2, 100.4, 100.6]
-    assert thin_targets(tight, 100.0, True, keep=3) == tight
-    assert thin_targets(tight, 100.0, True, keep=5) == tight
-    # One more candidate than published → thinning is allowed again.
+    assert thin_targets(tight, 100.0, True, keep=3) == [100.2]
+    assert thin_targets(tight, 100.0, True, keep=5) == [100.2]
+    # The 5 % backstop then keeps the ladder from shrinking to one TP.
+    assert ensure_min_tp_distance([100.2], 100.0, True, min_pct=0.05) == [100.2, 105.0]
+    # A deeper pool still replaces instead of deleting.
     assert thin_targets(tight + [102.0], 100.0, True, keep=3) == [100.2, 102.0]
 
 
@@ -170,12 +173,14 @@ def test_thinned_bots_import_the_shared_constant_not_a_literal():
         assert re.search(r"keep\s*=\s*\d", src) is None, f"{name}: hardcoded keep"
 
 
-def test_epd2_legacy_path_is_deliberately_not_thinned():
-    """Bot 10 has BOTH paths — EPD3 (3 of up to 20) and the EPD2 legacy leg that
-    publishes its full list. Only the first may be thinned."""
+def test_epd2_legacy_path_is_thinned_since_t147():
+    """Bot 10 has BOTH paths — EPD3 (3 of up to 20) and the EPD2 legacy leg.
+    Since T-147 BOTH route through thin_targets: the EPD2 ladder is
+    Cornix-executed since the T-143 revive, and its raw pool produced TP gaps
+    down to 0.096 % on the live channel. The raw-pool call must be gone."""
     src = _src("10_pump_dump_detector.py")
-    assert src.count("thin_targets(t_cands") == 1, "expected exactly one thinned path in bot 10"
-    assert "ensure_min_tp_distance(t_cands[:20]" in src, "the EPD2 legacy path must keep its raw pool"
+    assert src.count("thin_targets(t_cands") == 2, "expected both bot-10 paths to thin"
+    assert "ensure_min_tp_distance(t_cands[:20]" not in src, "the EPD2 legacy raw-pool call is back"
     assert "n_show=len(targets)" in src
 
 
