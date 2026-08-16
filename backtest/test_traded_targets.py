@@ -76,12 +76,13 @@ def test_the_carve_out_stays_small():
     """A guard against this quietly growing into a fleet-wide special case:
     every entry here is a real persist/publish gap verified in the emitter.
 
-    After T-099 (ROM1) and T-100 (AIM2) both gaps are closed at the source, so
-    these two entries are historical-only decoders for the archive. A THIRD name
-    appearing here would mean an emitter regressed into persisting more than it
-    publishes — which `backtest/test_published_targets.py` exists to prevent.
+    After T-099 (ROM1), T-100 (AIM2) and T-147 (EPD2: the legacy leg persisted
+    its raw pool of up to 20 while Cornix published 3 — closed at the source by
+    the thin+cap) all gaps are closed, so these entries are historical-only
+    decoders for the archive. A FURTHER name appearing here would mean an
+    emitter regressed into persisting more than it publishes — which `backtest/test_published_targets.py` exists to prevent.
     """
-    assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2"}
+    assert set(PUBLISHED_TARGET_COUNT) == {"ROM1", "AIM2", "EPD2"}
     assert all(n == 3 for n in PUBLISHED_TARGET_COUNT.values())
 
 

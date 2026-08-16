@@ -63,7 +63,13 @@ from core import config as _kcfg  # noqa: E402
 from core.candles import read_candles_with_indicators  # noqa: E402
 from core.database import get_db_connection  # noqa: E402
 from core.funding_features import funding_features_asof, load_funding  # noqa: E402
-from core.trade_utils import ensure_min_tp_distance, get_hvn_and_sr_levels, hvn_sr_trade_geometry  # noqa: E402
+from core.trade_utils import (  # noqa: E402
+    N_PUBLISHED_TARGETS,
+    ensure_min_tp_distance,
+    get_hvn_and_sr_levels,
+    hvn_sr_trade_geometry,
+    thin_targets,
+)
 from tools.walkforward_sim import simulate_exit  # noqa: E402
 
 SINCE_DEFAULT = "2026-02-25"      # start of reliable pump_dump_events history
@@ -295,7 +301,15 @@ def main() -> None:
                     win = df.iloc[max(0, idx + 1 - LEVEL_WINDOW_H): idx + 1][["high", "low", "close"]]
                     supps, resis = get_hvn_and_sr_levels(None, sym, entry1, df=win)
                     entry2, sl, t_cands = hvn_sr_trade_geometry(entry1, is_long, supps, resis)
-                    targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+                    # T-2026-KYT-9050-147: mirror the LIVE leg (trainer == serving,
+                    # hard rule 7) — thin to the published count, then backstop,
+                    # then cap: identical to 10_pump_dump_detector's EPD2 path.
+                    targets = ensure_min_tp_distance(
+                        thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+                        entry1,
+                        is_long,
+                        min_pct=0.05,
+                    )[:N_PUBLISHED_TARGETS]
                     if not targets or sl <= 0 or entry1 <= 0:
                         raise ValueError("degenerate geometry")
                     end = min(idx + 2 + HORIZON_CANDLES, len(times))

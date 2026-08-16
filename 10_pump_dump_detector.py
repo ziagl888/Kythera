@@ -1345,12 +1345,24 @@ def process_coin_logics(conn, symbol):
 
         # FIX: real zones + a 5% target if applicable when the last zone is too close
         #
-        # DELIBERATELY NOT THINNED (T-2026-KYT-9050-098): this legacy EPD2 leg posts
-        # with n_show=len(targets), so its published ladder IS its candidate pool.
-        # thin_targets would delete targets without replacement — exactly the case the
-        # operator's condition ("only skip when not everything is published") excludes.
-        # The EPD3 path above (:263) is the one that publishes 3 of up to 20 and is thinned.
-        targets = ensure_min_tp_distance(t_cands[:20], entry1, is_long, min_pct=0.05)
+        # THINNED since T-2026-KYT-9050-147 (supersedes the T-098 exclusion): this
+        # leg used to publish its raw pool ("published ladder IS the pool", so no
+        # deletion without replacement). Since the EPD2 SHORT revive (T-143) the
+        # ladder is Cornix-executed, and 9 of 10 live signals carried TP gaps
+        # under 1 % (worst 0.096 %) — three tranches inside one tick. Operator
+        # decision Michi 2026-08-16: enforce MIN_TP_GAP_PCT here too; a dropped
+        # target without a replacement is the honest outcome. The final
+        # [:N_PUBLISHED_TARGETS] cap makes stored == published == monitor-scored
+        # (P2.31 parity): the 5 % backstop only survives when the thinned ladder
+        # was short, never as an unpublished TP4 the monitor could credit.
+        # Rows written BEFORE this deploy keep their long ladders — the archive
+        # decoder for those is PUBLISHED_TARGET_COUNT in core/realized_pnl.py.
+        targets = ensure_min_tp_distance(
+            thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
+            entry1,
+            is_long,
+            min_pct=0.05,
+        )[:N_PUBLISHED_TARGETS]
 
         # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate for the legacy EPD2
         # direct-post leg. Default LIVE ⇒ no behaviour change. Since T-2026-KYT-9050-143
@@ -1358,9 +1370,10 @@ def process_coin_logics(conn, symbol):
         # (monitored trade instead of Cornix); the EPD3 retrain (both directions LIVE
         # since T-037/T-085) runs separately via
         # _emit_epd3_shadow/post_ai_signal_gated. Purely additive on the post branch (rule 4).
-        # n_show=len(targets): the legacy EPD2 LIVE path stores the FULL target list
-        # in ai_signals (json.dumps(targets), Cornix shows only [:3]) — the parked
-        # shadow mirrors that for audit continuity with the historical EPD2 series.
+        # n_show=len(targets): since the T-147 thin+cap the ladder is at most the
+        # published 3, so stored == published — n_show=len(targets) is now identity
+        # with [:3]; rows from before the cap keep their long ladders (decoder:
+        # PUBLISHED_TARGET_COUNT in core/realized_pnl.py).
         _route = route_legacy_leg(
             conn, module_tag, best_direction, symbol, best_prob, entry1, entry2, sl, targets, n_show=len(targets)
         )

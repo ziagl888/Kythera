@@ -80,18 +80,21 @@ def thin_targets(
     ``1 x ATR``; this is the same idea as a relative floor for the legs that do
     not go through it.
 
-    The pool is deeper than the ladder
-    ----------------------------------
-    Those emitters compute up to 20 candidates and publish 3, so skipping a
-    too-close level does not lose a target — it replaces it with the next one
-    that is actually far enough away. That is the whole reason this is safe here
-    and would NOT be safe on the ``n_show=len(targets)`` emitters (7/18/24/25,
-    bot 10's EPD2 legacy path): there the published ladder IS the pool, and
-    thinning would delete targets without replacement.
-
-    ``keep`` is the number the caller will publish. The guard is deliberately
-    ``len(candidates) <= keep`` rather than a flag: a caller that publishes
-    everything it has cannot accidentally opt in.
+    Thinning applies regardless of pool depth (T-2026-KYT-9050-147)
+    ---------------------------------------------------------------
+    Until T-147 a ``len(candidates) <= keep`` guard skipped thinning whenever
+    the pool was not deeper than the ladder — the T-098 operator condition
+    "only skip when not everything gets published" protected the
+    ``n_show=len(targets)`` emitters from deleting a target without a
+    replacement. Measured on the live book (2026-08-16) that guard let dense
+    ladders through on BOTH sides: pool-of-3 signals on the gated legs
+    (EPD3/TSM1) and every ladder-publishing leg, with published TP gaps
+    down to 0.08 %. Operator decision Michi 2026-08-16 (supersedes the T-098
+    condition): a too-close target is DROPPED even without a replacement —
+    two real TPs beat three clustered ones. The ladder emitters that do not
+    call this function (bots 7/18/24/25) keep their raw ladders for now
+    (T-147 scope decision); bot 10's EPD2 legacy leg routes through here
+    since it went Cornix-live (T-143).
 
     Gaps are measured against the PREVIOUS KEPT target, not the previous
     candidate — otherwise a run of near-identical levels would each be measured
@@ -101,7 +104,7 @@ def thin_targets(
     separated levels. That is the honest outcome and it is not padded here:
     ``ensure_min_tp_distance`` runs afterwards and supplies the 5 % backstop.
     """
-    if keep <= 0 or len(candidates) <= keep or min_gap_pct <= 0 or entry <= 0:
+    if keep <= 0 or min_gap_pct <= 0 or entry <= 0:
         return list(candidates)
 
     def dist(t: float) -> float:

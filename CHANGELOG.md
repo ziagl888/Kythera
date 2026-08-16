@@ -1,3 +1,15 @@
+## [2026-08-16] The 1% TP floor now applies without a replacement target — pool guard dropped, EPD2 ladder thinned (T-2026-KYT-9050-147)
+
+Bug report Michi: published ladders carried TP gaps down to 0.08%. Two holes: `thin_targets`
+skipped thinning entirely when the pool was not deeper than the ladder (pool-of-3 signals on the
+gated legs slipped through), and the EPD2 legacy leg never called it (T-098 exclusion — stale since
+the T-143 revive made that ladder Cornix-executed: 9 of 10 live signals under 1%, worst 0.096%).
+Operator decision supersedes the T-098 condition: a too-close target is dropped even without a
+replacement; the 5% backstop keeps ladders from collapsing. The EPD2 leg now thins, caps at the
+published 3 (stored == published == monitor-scored), the dataset builder mirrors it (trainer ==
+serving), and `EPD2` joined `PUBLISHED_TARGET_COUNT` as the archive decoder for pre-deploy rows.
+Bots 7/18/24/25 keep their raw ladders (explicit scope decision).
+
 ## [2026-08-12] Three fleet entries never loaded .env — the documented gate-flip path silently did nothing (T-2026-KYT-9050-138)
 
 Found live during the snapshot rollout: after `KYTHERA_CANDLE_SNAPSHOT=1` went into `.env` and the
