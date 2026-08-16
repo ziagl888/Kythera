@@ -92,6 +92,12 @@ def _signed_move_pct(sign: float, entry: float, price: float) -> float:
 PUBLISHED_TARGET_COUNT: dict[str, int] = {
     "ROM1": 3,
     "AIM2": 3,
+    # EPD2 (T-2026-KYT-9050-147): the legacy leg stored its FULL raw pool (up
+    # to 20 targets) while the Cornix message always published [:3]. Since
+    # T-147 the bot stores the thinned+capped 3, so — same as ROM1/AIM2 above —
+    # this entry is identity on new rows and the archive decoder for every row
+    # before the deploy.
+    "EPD2": 3,
 }
 
 

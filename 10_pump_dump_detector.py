@@ -1351,14 +1351,18 @@ def process_coin_logics(conn, symbol):
         # ladder is Cornix-executed, and 9 of 10 live signals carried TP gaps
         # under 1 % (worst 0.096 %) — three tranches inside one tick. Operator
         # decision Michi 2026-08-16: enforce MIN_TP_GAP_PCT here too; a dropped
-        # target without a replacement is the honest outcome, and the stored
-        # ladder now matches what Cornix actually trades (monitor parity).
+        # target without a replacement is the honest outcome. The final
+        # [:N_PUBLISHED_TARGETS] cap makes stored == published == monitor-scored
+        # (P2.31 parity): the 5 % backstop only survives when the thinned ladder
+        # was short, never as an unpublished TP4 the monitor could credit.
+        # Rows written BEFORE this deploy keep their long ladders — the archive
+        # decoder for those is PUBLISHED_TARGET_COUNT in core/realized_pnl.py.
         targets = ensure_min_tp_distance(
             thin_targets(t_cands[:20], entry1, is_long, keep=N_PUBLISHED_TARGETS),
             entry1,
             is_long,
             min_pct=0.05,
-        )
+        )[:N_PUBLISHED_TARGETS]
 
         # T-2026-KYT-9050-033 (audit T-032): fleet lifecycle gate for the legacy EPD2
         # direct-post leg. Default LIVE ⇒ no behaviour change. Since T-2026-KYT-9050-143

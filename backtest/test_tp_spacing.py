@@ -11,10 +11,13 @@
 #
 # `thin_targets` adds the missing TP-to-TP floor. The two load-bearing properties:
 #
-#   1. It only ever thins when the candidate pool is DEEPER than what gets published —
-#      otherwise a target would be dropped without replacement. That is the operator's
-#      own condition and it is what keeps the `n_show=len(targets)` emitters (bot 7/18/
-#      24/25 and bot 10's EPD2 legacy path) out of it.
+#   1. Thinning applies regardless of pool depth (T-2026-KYT-9050-147, operator
+#      decision Michi 2026-08-16, supersedes the T-098 pool-guard condition): a
+#      too-close target is DROPPED even without a replacement — two real TPs beat
+#      three clustered ones, and the 5 % backstop keeps ladders from collapsing.
+#      Bot 10's EPD2 legacy leg routes through it since it went Cornix-live
+#      (T-143); the remaining ladder emitters (bots 7/18/24/25) simply do not
+#      call it yet (explicit T-147 scope decision).
 #   2. The gap is measured against the last KEPT target, not the previous candidate.
 #      Measured pairwise, a run of near-identical levels passes every individual check
 #      and still clusters.
@@ -91,7 +94,7 @@ def test_thins_even_when_the_pool_is_not_deeper_than_the_ladder():
     T-098 condition): a too-close target is dropped even without a replacement
     — two real TPs beat three clustered ones. Until T-147 a
     ``len(candidates) <= keep`` guard passed these pools through untouched,
-    which let dense ladders reach Cornix on pool-of-3 signals (EPD3/TSM1/AIM2)
+    which let dense ladders reach Cornix on pool-of-3 signals (EPD3/TSM1)
     and on the whole EPD2 legacy leg (9 of 10 live signals under 1 % gap).
     """
     tight = [100.2, 100.4, 100.6]
@@ -292,13 +295,14 @@ def test_replays_of_thinned_legs_thin_too():
         assert "ensure_min_tp_distance(list(t_cands[:20])" not in src, f"{name}: unthinned call left"
 
 
-def test_epd2_dataset_builder_stays_unthinned():
-    """It mirrors the EPD2 LEGACY leg — the one bot-10 path that publishes its full
-    list and is therefore deliberately not thinned. Thinning here would desync the
-    dataset from the leg it is built for."""
+def test_epd2_dataset_builder_mirrors_the_thinned_live_leg():
+    """Trainer == serving (hard rule 7): since T-147 the live EPD2 leg thins and
+    caps its ladder, so the dataset builder must replay exactly that geometry —
+    keeping the raw pool here would desync training economics from Cornix."""
     src = _src(os.path.join("tools", "epd2_build_dataset.py"))
-    assert "thin_targets" not in src
-    assert "ensure_min_tp_distance(t_cands[:20]" in src
+    assert "thin_targets(t_cands[:20]" in src, "builder no longer mirrors the thinned live geometry"
+    assert "ensure_min_tp_distance(t_cands[:20]" not in src, "unthinned raw-pool call is back"
+    assert "[:N_PUBLISHED_TARGETS]" in src, "builder must cap like the live leg (stored == published)"
 
 
 def test_smart_targets_legs_are_untouched():

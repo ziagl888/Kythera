@@ -88,7 +88,7 @@ def thin_targets(
     ``n_show=len(targets)`` emitters from deleting a target without a
     replacement. Measured on the live book (2026-08-16) that guard let dense
     ladders through on BOTH sides: pool-of-3 signals on the gated legs
-    (EPD3/TSM1/AIM2) and every ladder-publishing leg, with published TP gaps
+    (EPD3/TSM1) and every ladder-publishing leg, with published TP gaps
     down to 0.08 %. Operator decision Michi 2026-08-16 (supersedes the T-098
     condition): a too-close target is DROPPED even without a replacement —
     two real TPs beat three clustered ones. The ladder emitters that do not
