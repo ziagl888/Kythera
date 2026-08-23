@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import os
 import time
 import warnings
 
@@ -11,11 +12,69 @@ from core.bot_catalog import has_standard_leverage
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.state_utils import atomic_read_json, atomic_write_json
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - AI_MONITOR - %(message)s')
 logger = logging.getLogger(__name__)
+
+# T-2026-KYT-9050-150: cold-start catch-up. `last_checked` below is in-memory, so
+# every process restart used to fall into the "no watermark -> newest candle only"
+# branch and the whole downtime gap went unscored. We persist the end of each
+# completed pass here and replay from it on the next start.
+MONITOR_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_trade_monitor_state.json")
+# Beyond this the gap is not replayed: an unbounded catch-up would score days of
+# candles in one pass and is a book-repair job, not a monitor job.
+MAX_CATCHUP_HOURS = 48.0
+# Re-scan a little before the watermark. Re-scoring an already scored candle is a
+# no-op (closed trades are gone from ai_signals), missing one is not.
+CATCHUP_OVERLAP_MIN = 15
+STATE_WRITE_INTERVAL_S = 60.0
+
+
+def _resolve_catchup(wm_raw, now_utc):
+    """Decide the cold-start replay start from the persisted watermark.
+
+    Pure: no I/O, no logging. Returns (catchup_from | None, log_level, message).
+    A None start means "score the newest candle only" - the pre-T-150 behaviour.
+    """
+    if not wm_raw:
+        return None, "info", "cold start: no persisted watermark - scoring the newest candle only."
+    try:
+        wm = datetime.datetime.fromisoformat(wm_raw)
+    except (ValueError, TypeError):
+        return None, "warning", f"cold start: unreadable watermark {wm_raw!r} - scoring the newest candle only."
+    if wm.tzinfo is None:
+        wm = wm.replace(tzinfo=pytz.UTC)
+    gap_h = (now_utc - wm).total_seconds() / 3600.0
+    if gap_h < 0:
+        return None, "warning", f"cold start: watermark {wm_raw} is in the future - ignoring it."
+    if gap_h > MAX_CATCHUP_HOURS:
+        return (
+            None,
+            "warning",
+            f"cold start: {gap_h:.1f}h gap exceeds the {MAX_CATCHUP_HOURS}h catch-up cap - "
+            "scoring the newest candle only. The gap stays unscored; repair the book out of band.",
+        )
+    start = wm - datetime.timedelta(minutes=CATCHUP_OVERLAP_MIN)
+    return (
+        start,
+        "info",
+        f"cold start: catch-up armed - replaying 5m candles from {start.isoformat()} ({gap_h:.2f}h gap).",
+    )
+
+
+def _catchup_floor(catchup_from, open_time):
+    """Cold-start scan start for one trade - never before its own open_time."""
+    if catchup_from is None:
+        return None
+    ot = open_time
+    if ot is not None and ot.tzinfo is None:
+        ot = ot.replace(tzinfo=pytz.UTC)
+    if ot is not None and ot > catchup_from:
+        return ot
+    return catchup_from
 
 
 def main():
@@ -83,6 +142,16 @@ def main():
     # get lost. After process restart each trade starts at the newest candle (no
     # retroactive scoring of old trades).
     last_checked = {}
+
+    # T-2026-KYT-9050-150: arm the cold-start catch-up. Safe in this process: the
+    # monitor only writes the book - there is no Telegram/Cornix emission anywhere
+    # in this file - so replaying a gap cannot fire late orders.
+    catchup_from, _lvl, _msg = _resolve_catchup(
+        (atomic_read_json(MONITOR_STATE_FILE, default={}) or {}).get("last_pass_utc"),
+        datetime.datetime.now(pytz.UTC),
+    )
+    getattr(logger, _lvl)(_msg)
+    _last_state_write = 0.0
 
     while True:
         try:
@@ -156,7 +225,10 @@ def main():
 
             coin_min_wm = {}
             for t in active_trades:
-                wm = last_checked.get(t[0])
+                # T-2026-KYT-9050-150: on a cold start there is no last_checked yet -
+                # fall back to the catch-up floor, else only one candle gets fetched
+                # per coin and the per-trade filter below has nothing to work on.
+                wm = last_checked.get(t[0]) or _catchup_floor(catchup_from, t[9])
                 if wm is not None:
                     prev = coin_min_wm.get(t[1])
                     if prev is None or wm < prev:
@@ -263,6 +335,10 @@ def main():
                     # cycle as before (high/low grow intracandle). New trade (no watermark):
                     # just newest candle.
                     wm = last_checked.get(trade_id)
+                    if wm is None:
+                        # T-2026-KYT-9050-150: cold start replays the gap instead of
+                        # collapsing onto the newest candle.
+                        wm = _catchup_floor(catchup_from, open_time)
                     if wm is None:
                         trade_candles = candles_all[-1:]
                     else:
@@ -405,6 +481,11 @@ def main():
 
                         # C) EXECUTE DATABASE UPDATES
                         if is_closed:
+                            # T-2026-KYT-9050-150: stamp the close with the 5m candle
+                            # that triggered it. NOW() booked wall-clock time, which is
+                            # wrong by one poll gap in normal operation and by the whole
+                            # downtime after a restart.
+                            close_ts = c_ot.astimezone(pytz.UTC).replace(tzinfo=None)
                             pnl = (
                                 (close_price - entry) / entry * 100
                                 if direction == "LONG"
@@ -445,7 +526,7 @@ def main():
                                 cur.execute(
                                     """
                                     INSERT INTO closed_ai_signals (symbol, model, direction, entry, close_price, targets_hit, open_time, close_time, status, targets, lev)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                     (
                                         symbol,
@@ -455,6 +536,7 @@ def main():
                                         float(close_price),
                                         int(new_targets_hit),
                                         open_time,
+                                        close_ts,
                                         close_reason,
                                         targets_json,
                                         lev_text,
@@ -498,6 +580,19 @@ def main():
             # Final commit for remaining trades (e.g. just 12, didn't reach 50 threshold)
             if updates_pending > 0:
                 conn.commit()
+
+            # T-2026-KYT-9050-150: the pass is through and every live trade carries a
+            # watermark now - catch-up must not re-arm on the next iteration.
+            if catchup_from is not None:
+                logger.info("cold-start catch-up done - back to incremental scoring.")
+                catchup_from = None
+
+            # Persist the pass end (throttled) so the next cold start can replay the
+            # gap. Written only after a clean pass; a crashed pass keeps the older
+            # watermark, which replays a bit more rather than losing it.
+            if time.monotonic() - _last_state_write >= STATE_WRITE_INTERVAL_S:
+                atomic_write_json(MONITOR_STATE_FILE, {"last_pass_utc": now_utc.isoformat()})
+                _last_state_write = time.monotonic()
 
         except KeyboardInterrupt:
             raise
