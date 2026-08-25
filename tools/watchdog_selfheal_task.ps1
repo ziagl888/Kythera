@@ -1,11 +1,37 @@
 <#
 .SYNOPSIS
-    Configure restart-on-failure on the "Kythera Watchdog" scheduled task so a
-    dead launcher/watchdog auto-restarts and the OUTER supervision net self-heals
-    (T-2026-KYT-9050-025).
+    Harden the "Kythera Watchdog" scheduled task in ONE write: remove the 72h
+    ExecutionTimeLimit that force-kills the fleet (T-2026-KYT-9050-151) and arm
+    restart-on-failure so a dead launcher/watchdog auto-restarts and the OUTER
+    supervision net self-heals (T-2026-KYT-9050-025).
 
 .DESCRIPTION
-    The "Kythera Watchdog" task has a single <BootTrigger/> and NO restart-on-
+    (A) ExecutionTimeLimit. The task carries ExecutionTimeLimit=PT72H. After
+    exactly 72.0h of uptime the Task Scheduler force-terminates it: CTRL_BREAK
+    reaches the whole process group, every bot dies with 0xC000013A
+    (STATUS_CONTROL_C_EXIT), and the bots the watchdog restarts in its final
+    seconds survive as UNSUPERVISED ORPHANS that keep trading and logging while
+    the task reads State=Ready. Measured three times: 2026-08-12 15:40 -> dead
+    08-15 15:41 (23.6h orphan phase), 08-17 16:57 -> dead 08-20 16:58 (15.9h),
+    08-21 08:49 -> dead 08-24 08:49 (28h). Every run that stayed under 72h ended
+    cleanly with a ~2min tail. This is the ROOT CAUSE; setting the limit to PT0S
+    (unlimited) is the actual fix.
+
+    Restart-on-failure below does NOT cover it: a termination via
+    ExecutionTimeLimit ends success-class (SCHED_S_TASK_TERMINATED), so the task
+    never reports a failure for restart-on-failure to act on.
+
+    Both fields live on the SAME Settings object and are written by the SAME
+    Set-ScheduledTask call - and that call is the step that can silently drop a
+    password-logon principal. Doing both in one write halves that exposure
+    compared to two separate scripts.
+
+    UNVERIFIED, do not assume: whether the scheduler re-reads ExecutionTimeLimit
+    for an ALREADY RUNNING instance. If it does not, the current run still dies
+    at its old deadline. The guaranteed path is apply + one tools/restart_fleet.ps1
+    at an operator-chosen time - the new run then starts under PT0S.
+
+    (B) Restart-on-failure. The task has a single <BootTrigger/> and NO restart-on-
     failure (RestartCount=0, RestartInterval unset). When the launcher/watchdog
     dies (e.g. the psutil open_files access-violation 0xC0000005 fixed in
     main_watchdog.py this same task), the task flips Running -> Ready and nothing
@@ -45,6 +71,10 @@
 .PARAMETER TaskName
     Scheduled task to configure. Default: 'Kythera Watchdog'.
 
+.PARAMETER ExecutionTimeLimit
+    ISO-8601 duration for the task's run-time cap. Default 'PT0S' = unlimited,
+    which is what removes the 72h kill. Pass the current value to leave it alone.
+
 .PARAMETER RestartCount
     Number of restart attempts after a failure (Task Scheduler bounds: >= 1).
     Default 3.
@@ -78,7 +108,8 @@ param(
     [switch]$Apply,
     [string]$TaskName = 'Kythera Watchdog',
     [int]$RestartCount = 3,
-    [int]$RestartIntervalMinutes = 1
+    [int]$RestartIntervalMinutes = 1,
+    [string]$ExecutionTimeLimit = 'PT0S'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,12 +118,35 @@ $LauncherPath = Join-Path $RepoRoot 'launch_watchdog.cmd'
 
 function Write-Line { param([string]$m, [string]$lvl = 'INFO'); Write-Host ("{0} - {1}" -f $lvl, $m) }
 
+function ConvertTo-DurationKey {
+    # Task Scheduler expresses "no run-time limit" as PT0S OR as an empty/absent
+    # value depending on how the definition was written and read back. Comparing
+    # the raw strings would report a MISMATCH on a SUCCESSFUL apply and tell the
+    # operator the change failed - so both spellings collapse to one key.
+    param([string]$Duration)
+    if ([string]::IsNullOrWhiteSpace($Duration) -or $Duration -eq 'PT0S') { return '<unlimited>' }
+    return $Duration
+}
+
+function Format-Duration {
+    param([string]$Duration)
+    if ([string]::IsNullOrWhiteSpace($Duration)) { return '<none>' }
+    return $Duration
+}
+
 if ($RestartIntervalMinutes -lt 1 -or $RestartIntervalMinutes -gt 30) {
     Write-Line "RestartIntervalMinutes must be between 1 and 30 (Task Scheduler bound)." 'ERROR'
     exit 3
 }
 if ($RestartCount -lt 1) {
     Write-Line "RestartCount must be >= 1." 'ERROR'
+    exit 3
+}
+# A malformed duration would be written verbatim and silently mis-cap the task.
+# The lookahead rejects the degenerate 'P' and 'PT', which the component groups
+# alone would accept because every one of them is optional.
+if ($ExecutionTimeLimit -notmatch '^P(?=\d|T\d)(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$') {
+    Write-Line ("ExecutionTimeLimit '{0}' is not an ISO-8601 duration (e.g. PT0S, PT72H)." -f $ExecutionTimeLimit) 'ERROR'
     exit 3
 }
 $RestartInterval = "PT{0}M" -f $RestartIntervalMinutes
@@ -106,8 +160,9 @@ try {
 }
 Write-Line ("Task '{0}': State={1}, User={2}, RunLevel={3}" -f `
         $TaskName, $task.State, $task.Principal.UserId, $task.Principal.RunLevel)
-Write-Line ("Current: RestartCount={0}, RestartInterval={1}, MultipleInstances={2}" -f `
-        $task.Settings.RestartCount, $task.Settings.RestartInterval, $task.Settings.MultipleInstances)
+Write-Line ("Current: ExecutionTimeLimit={0}, RestartCount={1}, RestartInterval={2}, MultipleInstances={3}" -f `
+        (Format-Duration $task.Settings.ExecutionTimeLimit), $task.Settings.RestartCount, `
+        $task.Settings.RestartInterval, $task.Settings.MultipleInstances)
 
 # --- Preflight: launcher must be v6+ (propagates the python exit code) --------
 # Without exit-code propagation the task never sees a crash as a failure, so
@@ -128,22 +183,38 @@ if (-not $launcherV6) {
 Write-Line "Launcher v6 detected (exit-code propagation present)." 'INFO'
 
 # --- Idempotency: already configured? ----------------------------------------
-$already = ($task.Settings.RestartCount -eq $RestartCount) -and ($task.Settings.RestartInterval -eq $RestartInterval)
-if ($already) {
-    Write-Line ("Already configured: RestartCount={0}, RestartInterval={1} - nothing to do." -f `
-            $RestartCount, $RestartInterval)
+$etlOk = (ConvertTo-DurationKey $task.Settings.ExecutionTimeLimit) -eq (ConvertTo-DurationKey $ExecutionTimeLimit)
+$rofOk = ($task.Settings.RestartCount -eq $RestartCount) -and ($task.Settings.RestartInterval -eq $RestartInterval)
+if ($etlOk -and $rofOk) {
+    Write-Line ("Already configured: ExecutionTimeLimit={0}, RestartCount={1}, RestartInterval={2} - nothing to do." -f `
+            $ExecutionTimeLimit, $RestartCount, $RestartInterval)
     exit 0
 }
 
-Write-Line ("PLAN: set RestartCount={0}, RestartInterval={1} (all other settings preserved)." -f `
-        $RestartCount, $RestartInterval)
+Write-Line "PLAN (one single Set-ScheduledTask write, all other settings preserved):"
+if ($etlOk) {
+    Write-Line ("  [ok]     ExecutionTimeLimit already {0}" -f $ExecutionTimeLimit)
+} else {
+    Write-Line ("  [CHANGE] ExecutionTimeLimit : {0} -> {1}   (removes the 72h kill)" -f `
+            (Format-Duration $task.Settings.ExecutionTimeLimit), $ExecutionTimeLimit)
+}
+if ($rofOk) {
+    Write-Line ("  [ok]     restart-on-failure already {0}/{1}" -f $RestartCount, $RestartInterval)
+} else {
+    Write-Line ("  [CHANGE] RestartCount/Interval : {0}/{1} -> {2}/{3}   (crash net only, NOT the 72h kill)" -f `
+            $task.Settings.RestartCount, $task.Settings.RestartInterval, $RestartCount, $RestartInterval)
+}
 
 if (-not $Apply) {
     Write-Line "DRY RUN - nothing changed. Re-run ELEVATED with -Apply to make the change." 'WARN'
     Write-Line "Equivalent manual command (elevated):" 'INFO'
     Write-Line ("  `$s = (Get-ScheduledTask -TaskName '{0}').Settings" -f $TaskName)
+    Write-Line ("  `$s.ExecutionTimeLimit = '{0}'" -f $ExecutionTimeLimit)
     Write-Line ("  `$s.RestartCount = {0}; `$s.RestartInterval = '{1}'" -f $RestartCount, $RestartInterval)
     Write-Line ("  Set-ScheduledTask -TaskName '{0}' -Settings `$s" -f $TaskName)
+    Write-Line "NOTE: this write neither stops nor starts anything - the running fleet is untouched." 'WARN'
+    Write-Line "      UNVERIFIED whether the scheduler re-reads ExecutionTimeLimit for the ALREADY" 'WARN'
+    Write-Line "      RUNNING instance. Guaranteed path: apply, then one tools/restart_fleet.ps1." 'WARN'
     exit 0
 }
 
@@ -157,6 +228,7 @@ if (-not $Apply) {
 $beforeLogon = $task.Principal.LogonType
 $beforeUser = $task.Principal.UserId
 $settings = $task.Settings
+$settings.ExecutionTimeLimit = $ExecutionTimeLimit
 $settings.RestartCount = $RestartCount
 $settings.RestartInterval = $RestartInterval
 try {
@@ -171,13 +243,15 @@ try {
 
 # --- Verify -------------------------------------------------------------------
 $after = Get-ScheduledTask -TaskName $TaskName
-Write-Line ("After: RestartCount={0}, RestartInterval={1}, MultipleInstances={2}, LogonType={3}, User={4}" -f `
-        $after.Settings.RestartCount, $after.Settings.RestartInterval, $after.Settings.MultipleInstances, `
-        $after.Principal.LogonType, $after.Principal.UserId)
-$fieldsOk = ($after.Settings.RestartCount -eq $RestartCount) -and ($after.Settings.RestartInterval -eq $RestartInterval)
+Write-Line ("After: ExecutionTimeLimit={0}, RestartCount={1}, RestartInterval={2}, MultipleInstances={3}, LogonType={4}, User={5}" -f `
+        (Format-Duration $after.Settings.ExecutionTimeLimit), $after.Settings.RestartCount, $after.Settings.RestartInterval, `
+        $after.Settings.MultipleInstances, $after.Principal.LogonType, $after.Principal.UserId)
+$fieldsOk = ((ConvertTo-DurationKey $after.Settings.ExecutionTimeLimit) -eq (ConvertTo-DurationKey $ExecutionTimeLimit)) -and `
+    ($after.Settings.RestartCount -eq $RestartCount) -and ($after.Settings.RestartInterval -eq $RestartInterval)
 $principalOk = ($after.Principal.LogonType -eq $beforeLogon) -and ($after.Principal.UserId -eq $beforeUser)
 if ($fieldsOk -and $principalOk) {
-    Write-Line "Restart-on-failure configured and verified (principal preserved). The outer supervision net now self-heals." 'INFO'
+    Write-Line "Applied and verified (principal preserved): 72h kill removed, crash net armed." 'INFO'
+    Write-Line "The running instance may still hold its old deadline - do one tools/restart_fleet.ps1 to be sure." 'WARN'
     exit 0
 } elseif (-not $principalOk) {
     Write-Line ("Principal CHANGED (LogonType {0}->{1}, User {2}->{3}) - Set-ScheduledTask dropped the password logon." -f `
@@ -186,6 +260,6 @@ if ($fieldsOk -and $principalOk) {
             $TaskName, $beforeUser) 'ERROR'
     exit 4
 } else {
-    Write-Line "Verification MISMATCH - the task did not read back the expected restart values. Inspect manually." 'ERROR'
+    Write-Line "Verification MISMATCH - the task did not read back the expected values. Inspect manually." 'ERROR'
     exit 4
 }
