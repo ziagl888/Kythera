@@ -1,5 +1,6 @@
 import datetime
 import logging
+import os
 import time
 import warnings
 
@@ -7,11 +8,21 @@ import pytz
 
 from core.candles import read_candles
 from core.database import get_db_connection
+from core.monitor_catchup import STATE_WRITE_INTERVAL_S
+from core.monitor_catchup import catchup_floor as _catchup_floor
+from core.monitor_catchup import resolve_catchup as _resolve_catchup
+from core.monitor_catchup import should_disarm_catchup as _should_disarm_catchup
+from core.state_utils import atomic_read_json, atomic_write_json
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - MONITOR - %(message)s')
 logger = logging.getLogger(__name__)
+
+# T-2026-KYT-9050-152: cold-start catch-up, ported from 8_ai_trade_monitor
+# (T-2026-KYT-9050-150). The mechanism lives in core.monitor_catchup and is shared
+# by both monitors; only this state file is bot-specific.
+MONITOR_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_monitor_state.json")
 
 
 # DATABASE HELPER FUNCTIONS
@@ -126,6 +137,18 @@ def monitor_loop():
     # newest candle (no retroactive scoring of old trades).
     last_checked = {}
 
+    # T-2026-KYT-9050-152: arm the cold-start catch-up. Safe in this process: it
+    # writes the book only - there is no Telegram/Cornix emission anywhere in this
+    # file (close_trade is silent by design) - so replaying a gap cannot fire late
+    # orders. Pinned by an AST guard in the test suite.
+    catchup_from, _lvl, _msg = _resolve_catchup(
+        (atomic_read_json(MONITOR_STATE_FILE, default={}) or {}).get("last_pass_utc"),
+        datetime.datetime.now(pytz.UTC),
+    )
+    getattr(logger, _lvl)(_msg)
+    _last_state_write = 0.0
+    _catchup_passes = 0
+
     while True:
         try:
             now = datetime.datetime.now(pytz.UTC)
@@ -176,7 +199,10 @@ def monitor_loop():
 
             coin_min_wm = {}
             for t in active_trades:
-                wm = last_checked.get(t['id'])
+                # T-2026-KYT-9050-152: on a cold start there is no last_checked yet -
+                # fall back to the catch-up floor, else only one candle gets fetched
+                # per coin and the per-trade filter below has nothing to work on.
+                wm = last_checked.get(t['id']) or _catchup_floor(catchup_from, t['time'])
                 if wm is not None:
                     prev = coin_min_wm.get(t['coin'])
                     if prev is None or wm < prev:
@@ -275,6 +301,10 @@ def monitor_loop():
                 # New trade (no watermark): only the newest candle.
                 wm = last_checked.get(trade['id'])
                 if wm is None:
+                    # T-2026-KYT-9050-152: cold start replays the gap instead of
+                    # collapsing onto the newest candle.
+                    wm = _catchup_floor(catchup_from, trade['time'])
+                if wm is None:
                     trade_candles = candles_all[-1:]
                 else:
                     trade_candles = [k for k in candles_all if k['open_time'] >= wm]
@@ -359,6 +389,30 @@ def monitor_loop():
                 if closed:
                     # Release the watermark of the closed trade
                     last_checked.pop(trade['id'], None)
+
+            # T-2026-KYT-9050-152: disarm the catch-up only once every active trade
+            # really carries a watermark - trades on coins the stale guard skipped
+            # never get one, and dropping the catch-up would lose their gap for good.
+            if catchup_from is not None:
+                _catchup_passes += 1
+                _disarm, _unscored = _should_disarm_catchup(active_ids, last_checked.keys(), _catchup_passes)
+                if _disarm and _unscored:
+                    logger.warning(
+                        f"cold-start catch-up gave up after {_catchup_passes} passes - "
+                        f"{len(_unscored)} trade(s) on stale coins were never scored; "
+                        "their gap stays unrepaired."
+                    )
+                    catchup_from = None
+                elif _disarm:
+                    logger.info("cold-start catch-up done - back to incremental scoring.")
+                    catchup_from = None
+
+            # Persist the pass end (throttled) so the next cold start can replay the
+            # gap. Written only after a clean pass; a crashed pass keeps the older
+            # watermark, which replays a bit more rather than losing it.
+            if time.monotonic() - _last_state_write >= STATE_WRITE_INTERVAL_S:
+                atomic_write_json(MONITOR_STATE_FILE, {"last_pass_utc": now_utc.isoformat()})
+                _last_state_write = time.monotonic()
 
         except KeyboardInterrupt:
             raise  # caught below

@@ -12,6 +12,10 @@ from core.bot_catalog import has_standard_leverage
 from core.candles import read_candles
 from core.database import get_db_connection
 from core.market_utils import get_max_leverage
+from core.monitor_catchup import STATE_WRITE_INTERVAL_S
+from core.monitor_catchup import catchup_floor as _catchup_floor
+from core.monitor_catchup import resolve_catchup as _resolve_catchup
+from core.monitor_catchup import should_disarm_catchup as _should_disarm_catchup
 from core.state_utils import atomic_read_json, atomic_write_json
 
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
@@ -23,49 +27,10 @@ logger = logging.getLogger(__name__)
 # every process restart used to fall into the "no watermark -> newest candle only"
 # branch and the whole downtime gap went unscored. We persist the end of each
 # completed pass here and replay from it on the next start.
+# T-2026-KYT-9050-152: the mechanism itself now lives in core.monitor_catchup and
+# is shared with 5_trade_monitor - the two had already drifted once. Only the
+# state file stays bot-specific.
 MONITOR_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_trade_monitor_state.json")
-# Beyond this the gap is not replayed: an unbounded catch-up would score days of
-# candles in one pass and is a book-repair job, not a monitor job.
-MAX_CATCHUP_HOURS = 48.0
-# Re-scan a little before the watermark. Re-scoring an already scored candle is a
-# no-op (closed trades are gone from ai_signals), missing one is not.
-CATCHUP_OVERLAP_MIN = 15
-STATE_WRITE_INTERVAL_S = 60.0
-# A permanently stale coin must not keep the catch-up armed forever (every pass
-# would re-fetch the whole gap). ~10 min at the 10s poll cadence.
-CATCHUP_MAX_PASSES = 60
-
-
-def _resolve_catchup(wm_raw, now_utc):
-    """Decide the cold-start replay start from the persisted watermark.
-
-    Pure: no I/O, no logging. Returns (catchup_from | None, log_level, message).
-    A None start means "score the newest candle only" - the pre-T-150 behaviour.
-    """
-    if not wm_raw:
-        return None, "info", "cold start: no persisted watermark - scoring the newest candle only."
-    try:
-        wm = datetime.datetime.fromisoformat(wm_raw)
-    except (ValueError, TypeError):
-        return None, "warning", f"cold start: unreadable watermark {wm_raw!r} - scoring the newest candle only."
-    if wm.tzinfo is None:
-        wm = wm.replace(tzinfo=pytz.UTC)
-    gap_h = (now_utc - wm).total_seconds() / 3600.0
-    if gap_h < 0:
-        return None, "warning", f"cold start: watermark {wm_raw} is in the future - ignoring it."
-    if gap_h > MAX_CATCHUP_HOURS:
-        return (
-            None,
-            "warning",
-            f"cold start: {gap_h:.1f}h gap exceeds the {MAX_CATCHUP_HOURS}h catch-up cap - "
-            "scoring the newest candle only. The gap stays unscored; repair the book out of band.",
-        )
-    start = wm - datetime.timedelta(minutes=CATCHUP_OVERLAP_MIN)
-    return (
-        start,
-        "info",
-        f"cold start: catch-up armed - replaying 5m candles from {start.isoformat()} ({gap_h:.2f}h gap).",
-    )
 
 
 def _close_timestamp(candle_open_time, trade_open_time):
@@ -85,31 +50,6 @@ def _close_timestamp(candle_open_time, trade_open_time):
     if ot.tzinfo is not None:
         ot = ot.astimezone(pytz.UTC).replace(tzinfo=None)
     return ot if ts < ot else ts
-
-
-def _should_disarm_catchup(active_ids, scored_ids, passes):
-    """Whether the cold-start catch-up may stop. Returns (disarm, unscored).
-
-    Only once EVERY active trade carries a watermark: trades on coins with stale
-    5m data are skipped by the stale guard and never get one, so disarming after
-    the first pass would drop their gap for good - and if ingestion was down with
-    the fleet, that is every coin. Bounded by CATCHUP_MAX_PASSES so a permanently
-    stale coin cannot keep the catch-up armed forever.
-    """
-    unscored = set(active_ids) - set(scored_ids)
-    return (not unscored) or passes >= CATCHUP_MAX_PASSES, unscored
-
-
-def _catchup_floor(catchup_from, open_time):
-    """Cold-start scan start for one trade - never before its own open_time."""
-    if catchup_from is None:
-        return None
-    ot = open_time
-    if ot is not None and ot.tzinfo is None:
-        ot = ot.replace(tzinfo=pytz.UTC)
-    if ot is not None and ot > catchup_from:
-        return ot
-    return catchup_from
 
 
 def main():
