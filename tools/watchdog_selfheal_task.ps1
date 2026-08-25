@@ -118,6 +118,22 @@ $LauncherPath = Join-Path $RepoRoot 'launch_watchdog.cmd'
 
 function Write-Line { param([string]$m, [string]$lvl = 'INFO'); Write-Host ("{0} - {1}" -f $lvl, $m) }
 
+function ConvertTo-DurationKey {
+    # Task Scheduler expresses "no run-time limit" as PT0S OR as an empty/absent
+    # value depending on how the definition was written and read back. Comparing
+    # the raw strings would report a MISMATCH on a SUCCESSFUL apply and tell the
+    # operator the change failed - so both spellings collapse to one key.
+    param([string]$Duration)
+    if ([string]::IsNullOrWhiteSpace($Duration) -or $Duration -eq 'PT0S') { return '<unlimited>' }
+    return $Duration
+}
+
+function Format-Duration {
+    param([string]$Duration)
+    if ([string]::IsNullOrWhiteSpace($Duration)) { return '<none>' }
+    return $Duration
+}
+
 if ($RestartIntervalMinutes -lt 1 -or $RestartIntervalMinutes -gt 30) {
     Write-Line "RestartIntervalMinutes must be between 1 and 30 (Task Scheduler bound)." 'ERROR'
     exit 3
@@ -127,7 +143,9 @@ if ($RestartCount -lt 1) {
     exit 3
 }
 # A malformed duration would be written verbatim and silently mis-cap the task.
-if ($ExecutionTimeLimit -notmatch '^P(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$') {
+# The lookahead rejects the degenerate 'P' and 'PT', which the component groups
+# alone would accept because every one of them is optional.
+if ($ExecutionTimeLimit -notmatch '^P(?=\d|T\d)(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$') {
     Write-Line ("ExecutionTimeLimit '{0}' is not an ISO-8601 duration (e.g. PT0S, PT72H)." -f $ExecutionTimeLimit) 'ERROR'
     exit 3
 }
@@ -143,7 +161,7 @@ try {
 Write-Line ("Task '{0}': State={1}, User={2}, RunLevel={3}" -f `
         $TaskName, $task.State, $task.Principal.UserId, $task.Principal.RunLevel)
 Write-Line ("Current: ExecutionTimeLimit={0}, RestartCount={1}, RestartInterval={2}, MultipleInstances={3}" -f `
-        $task.Settings.ExecutionTimeLimit, $task.Settings.RestartCount, `
+        (Format-Duration $task.Settings.ExecutionTimeLimit), $task.Settings.RestartCount, `
         $task.Settings.RestartInterval, $task.Settings.MultipleInstances)
 
 # --- Preflight: launcher must be v6+ (propagates the python exit code) --------
@@ -165,7 +183,7 @@ if (-not $launcherV6) {
 Write-Line "Launcher v6 detected (exit-code propagation present)." 'INFO'
 
 # --- Idempotency: already configured? ----------------------------------------
-$etlOk = ($task.Settings.ExecutionTimeLimit -eq $ExecutionTimeLimit)
+$etlOk = (ConvertTo-DurationKey $task.Settings.ExecutionTimeLimit) -eq (ConvertTo-DurationKey $ExecutionTimeLimit)
 $rofOk = ($task.Settings.RestartCount -eq $RestartCount) -and ($task.Settings.RestartInterval -eq $RestartInterval)
 if ($etlOk -and $rofOk) {
     Write-Line ("Already configured: ExecutionTimeLimit={0}, RestartCount={1}, RestartInterval={2} - nothing to do." -f `
@@ -178,7 +196,7 @@ if ($etlOk) {
     Write-Line ("  [ok]     ExecutionTimeLimit already {0}" -f $ExecutionTimeLimit)
 } else {
     Write-Line ("  [CHANGE] ExecutionTimeLimit : {0} -> {1}   (removes the 72h kill)" -f `
-            $task.Settings.ExecutionTimeLimit, $ExecutionTimeLimit)
+            (Format-Duration $task.Settings.ExecutionTimeLimit), $ExecutionTimeLimit)
 }
 if ($rofOk) {
     Write-Line ("  [ok]     restart-on-failure already {0}/{1}" -f $RestartCount, $RestartInterval)
@@ -226,9 +244,9 @@ try {
 # --- Verify -------------------------------------------------------------------
 $after = Get-ScheduledTask -TaskName $TaskName
 Write-Line ("After: ExecutionTimeLimit={0}, RestartCount={1}, RestartInterval={2}, MultipleInstances={3}, LogonType={4}, User={5}" -f `
-        $after.Settings.ExecutionTimeLimit, $after.Settings.RestartCount, $after.Settings.RestartInterval, `
+        (Format-Duration $after.Settings.ExecutionTimeLimit), $after.Settings.RestartCount, $after.Settings.RestartInterval, `
         $after.Settings.MultipleInstances, $after.Principal.LogonType, $after.Principal.UserId)
-$fieldsOk = ($after.Settings.ExecutionTimeLimit -eq $ExecutionTimeLimit) -and `
+$fieldsOk = ((ConvertTo-DurationKey $after.Settings.ExecutionTimeLimit) -eq (ConvertTo-DurationKey $ExecutionTimeLimit)) -and `
     ($after.Settings.RestartCount -eq $RestartCount) -and ($after.Settings.RestartInterval -eq $RestartInterval)
 $principalOk = ($after.Principal.LogonType -eq $beforeLogon) -and ($after.Principal.UserId -eq $beforeUser)
 if ($fieldsOk -and $principalOk) {
