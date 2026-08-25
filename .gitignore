@@ -225,6 +225,7 @@ active_patterns.json
 alerted_qms.json
 trendline_state.json
 ai_trade_monitor_state.json
+trade_monitor_state.json
 indicator_state.json
 chart_buffer_snapshot.json
 chart_buffer_snapshot.json.tmp

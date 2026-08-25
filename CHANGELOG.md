@@ -1,3 +1,31 @@
+## [2026-08-25] 5_trade_monitor gets the cold-start catch-up too; the mechanism moved to core so the two monitors cannot drift again (T-2026-KYT-9050-152)
+
+AUDIT_TODO P2.7 was written for **both** trade monitors — "the watermark is lost on a process
+restart" — but T-2026-KYT-9050-150 fixed only `8_ai_trade_monitor.py`. `5_trade_monitor.py` kept
+scoring every open trade against a single 5m candle after each restart, dropping the whole downtime
+gap. That drift is the reason the logic no longer lives in either bot.
+
+* New `core/monitor_catchup.py` holds the three pure helpers (`resolve_catchup`, `catchup_floor`,
+  `should_disarm_catchup`) plus the caps. Both monitors import them under their existing private
+  names, so the wiring and its guards are unchanged. Bot 8's behaviour is untouched by the move.
+* `5_trade_monitor.py` is wired the same way: watermark persisted per completed pass to its **own**
+  `trade_monitor_state.json` (a shared file would mean each process clobbers the other's), replay
+  floored per trade at its own open time, capped at 48h, disarmed only once every active trade
+  carries a watermark.
+* **Deliberate asymmetry between the two monitors, pinned by tests in both directions:** bot 8
+  stamps `closed_ai_signals.close_time` from the triggering candle; bot 5 leaves
+  `closed_trades_master.posted` at wall clock. `closed_trades_master` has no close-time column, and
+  other scripts compare `posted` against `datetime.now() - timedelta` to decide whether a trade
+  closed recently — a replayed backlog would backdate it past exactly those checks. Mirroring bot 8
+  here would have been the obvious and wrong move.
+* Verified that bot 5 emits nothing before relying on it: `close_trade` calls itself "silent — no
+  Telegram", but that is a docstring, not evidence. Checked AST-based at the executed code, same
+  guard as bot 8.
+* Tests split along the new structure: `backtest/test_monitor_catchup_shared.py` (14, the shared
+  helpers), `test_monitor_coldstart_catchup.py` (9, bot-8-specific), `test_monitor5_coldstart_catchup.py`
+  (8, bot-5-specific). Mutation-checked: removing either `_catchup_floor` call site fails the wiring
+  guard.
+
 ## [2026-08-25] The watchdog task's 72h ExecutionTimeLimit is the fleet's recurring killer — removal folded into the self-heal script (T-2026-KYT-9050-151)
 
 The "Kythera Watchdog" scheduled task carries `ExecutionTimeLimit=PT72H`. After exactly 72.0h of
