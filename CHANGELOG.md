@@ -1,3 +1,38 @@
+## [2026-08-25] The watchdog task's 72h ExecutionTimeLimit is the fleet's recurring killer — removal folded into the self-heal script (T-2026-KYT-9050-151)
+
+The "Kythera Watchdog" scheduled task carries `ExecutionTimeLimit=PT72H`. After exactly 72.0h of
+uptime the Task Scheduler force-terminates it: CTRL_BREAK reaches the whole process group, every bot
+dies with `0xC000013A` (`STATUS_CONTROL_C_EXIT`), and the bots the watchdog restarts in its final
+seconds survive as **unsupervised orphans** that keep trading and logging while the task reads
+`State=Ready`. That last part is why it went unnoticed for weeks — and why
+`tools/restart_fleet.ps1` reports "0 fleet processes" on a fleet that is demonstrably alive: its
+fingerprint counts python-with-a-live-python-parent and is documented as blind to orphans.
+
+Measured three times: 08-12 15:40 → dead 08-15 15:41 (23.6h orphan phase), 08-17 16:57 → dead 08-20
+16:58 (15.9h), 08-21 08:49 → dead 08-24 08:49 (28h). Every run that stayed under 72h ended cleanly
+with a ~2min tail. During the orphan phases the trade monitors (5 and 8) and the Telegram bot were
+dead while ~29 scanners kept generating; a read-only Binance check found no exchange exposure behind
+the affected book rows, so the cost was book integrity, not money.
+
+* `tools/watchdog_selfheal_task.ps1` now also sets `ExecutionTimeLimit` (default `PT0S` = unlimited)
+  — in the **same** `Set-ScheduledTask` write as the existing restart-on-failure fields. Both live on
+  one `Settings` object, and that call is the step that can silently convert a password-logon
+  principal to S4U and break `RunLevel=Highest`/boot start, so one write halves the exposure. The
+  post-apply verification covers the new field alongside `LogonType`/`UserId`.
+* Restart-on-failure does **not** cover this failure mode: a termination via `ExecutionTimeLimit`
+  ends success-class (`SCHED_S_TASK_TERMINATED`), so the task never reports a failure to act on. It
+  stays the complementary net for genuine crashes.
+* Dry-run remains the default and the launcher-v6 guard is unchanged. A malformed duration is now
+  rejected (exit 3) instead of being written verbatim and silently mis-capping the task.
+* Documented rather than asserted: whether the scheduler re-reads `ExecutionTimeLimit` for an
+  already-running instance is **unverified**. The guaranteed path is apply + one
+  `tools/restart_fleet.ps1` at an operator-chosen time.
+* Applying it to the live task stays an operator action (elevated shell). This change only makes the
+  tooling durable and reviewable.
+* `AUDIT_TODO.md`: P2.7's open caveat ("the watermark is lost on a process restart") is closed for
+  `8_ai_trade_monitor.py` by T-150 — `5_trade_monitor.py` still carries the in-memory-only watermark.
+  P2.4 stays open with one of three writers done.
+
 ## [2026-08-23] The AI trade monitor replays the candle gap on a cold start; close_time comes from the candle (T-2026-KYT-9050-150)
 
 Found while working up the 2026-08-20 outage. `last_checked` in `8_ai_trade_monitor.py` is an
