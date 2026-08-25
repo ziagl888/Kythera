@@ -1,3 +1,38 @@
+## [2026-08-23] The AI trade monitor replays the candle gap on a cold start; close_time comes from the candle (T-2026-KYT-9050-150)
+
+Found while working up the 2026-08-20 outage. `last_checked` in `8_ai_trade_monitor.py` is an
+in-memory watermark, so every process restart fell into the documented "no watermark -> newest
+candle only" branch and the whole downtime gap went unscored. After the watchdog was killed at its
+72h `ExecutionTimeLimit` the fleet ran unsupervised for 15.9h; the monitor came back at 05:49 UTC
+and closed 943 positions inside 40 seconds against a single 5m candle. An independent replay of
+3314 trades against 1.73M 5m candles — using the monitor's own rules (wick-aware, SL before TPs,
+`sl = entry` after TP1, `sl = targets[hit-2]` from TP2) — found 1315 wrong `close_time` values (up
+to 16h), 525 wrong `targets_hit` and 11 rows still flagged open although closed. Aggregate PnL is
+unchanged (+0.71% replayed vs +0.74% booked per trade) and a read-only Binance check showed no
+exchange exposure for the 11: a book-integrity defect that poisons roster analytics and the
+realized-PnL report, not a money loss.
+
+* The end of each completed pass is persisted (`ai_trade_monitor_state.json`, atomic via
+  `core.state_utils`); a cold start replays 5m candles from there, floored per trade at its own
+  `open_time` and re-scanning `CATCHUP_OVERLAP_MIN` before the watermark.
+* Bounded on purpose: a gap beyond `MAX_CATCHUP_HOURS` (48h) is refused loudly instead of being
+  replayed — repairing days of book is not a monitor job. A missing, unreadable or future watermark
+  degrades to the old newest-candle-only behaviour.
+* `close_time` is now stamped from the 5m candle that triggered the exit instead of `NOW()`, which
+  booked wall-clock time — wrong by one poll gap even in normal operation. Clamped at the trade's
+  own `open_time`: a trade closing inside the very candle it was posted in would otherwise be
+  stamped before it opened (the forming candle's `open_time` precedes the signal).
+* The catch-up disarms only once every active trade actually carries a watermark. Trades on coins
+  the stale-guard skips never get one, so disarming after the first pass would drop their gap for
+  good — and if ingestion was down with the fleet, that is every coin. Bounded by
+  `CATCHUP_MAX_PASSES` so a permanently stale coin cannot pin the catch-up, with a warning naming
+  how many trades stayed unscored.
+* Safe in this process because it emits nothing: `8_ai_trade_monitor.py` has no Telegram/Cornix
+  call anywhere, so a replayed backlog cannot fire late close orders. An AST-based guard in
+  `backtest/test_monitor_coldstart_catchup.py` fails if that ever changes.
+* Not covered here: retro-correcting the already mis-booked cohort, and the `PT72H`
+  `ExecutionTimeLimit` on the "Kythera Watchdog" task that caused the outage in the first place.
+
 ## [2026-08-16] The 1% TP floor now applies without a replacement target — pool guard dropped, EPD2 ladder thinned (T-2026-KYT-9050-147)
 
 Bug report Michi: published ladders carried TP gaps down to 0.08%. Two holes: `thin_targets`
