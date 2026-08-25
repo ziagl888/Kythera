@@ -19,7 +19,14 @@ realized-PnL report, not a money loss.
   replayed — repairing days of book is not a monitor job. A missing, unreadable or future watermark
   degrades to the old newest-candle-only behaviour.
 * `close_time` is now stamped from the 5m candle that triggered the exit instead of `NOW()`, which
-  booked wall-clock time — wrong by one poll gap even in normal operation.
+  booked wall-clock time — wrong by one poll gap even in normal operation. Clamped at the trade's
+  own `open_time`: a trade closing inside the very candle it was posted in would otherwise be
+  stamped before it opened (the forming candle's `open_time` precedes the signal).
+* The catch-up disarms only once every active trade actually carries a watermark. Trades on coins
+  the stale-guard skips never get one, so disarming after the first pass would drop their gap for
+  good — and if ingestion was down with the fleet, that is every coin. Bounded by
+  `CATCHUP_MAX_PASSES` so a permanently stale coin cannot pin the catch-up, with a warning naming
+  how many trades stayed unscored.
 * Safe in this process because it emits nothing: `8_ai_trade_monitor.py` has no Telegram/Cornix
   call anywhere, so a replayed backlog cannot fire late close orders. An AST-based guard in
   `backtest/test_monitor_coldstart_catchup.py` fails if that ever changes.

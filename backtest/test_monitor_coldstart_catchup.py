@@ -166,7 +166,55 @@ def test_close_time_is_the_candle_not_wall_clock():
         "close_time must be stamped from the triggering 5m candle; NOW() books "
         "wall-clock time and was the cause of the 1315 wrong timestamps"
     )
-    assert "close_ts = c_ot.astimezone(pytz.UTC).replace(tzinfo=None)" in SRC
+    assert "close_ts = _close_timestamp(c_ot, open_time)" in SRC
+
+
+# ── close_time provenance + the same-candle clamp ─────────────────────────────
+def test_close_timestamp_uses_the_triggering_candle():
+    candle = datetime.datetime(2026, 8, 20, 14, 5, tzinfo=pytz.UTC)
+    opened = datetime.datetime(2026, 8, 18, 4, 9, 14)  # noqa: DTZ001 - naive like the DB
+    assert mon._close_timestamp(candle, opened) == datetime.datetime(2026, 8, 20, 14, 5)  # noqa: DTZ001
+
+
+def test_close_timestamp_never_precedes_the_trade_open():
+    """Regression: a trade that closes inside the candle it was posted in.
+
+    The forming candle's open_time precedes the signal, so an unclamped stamp
+    writes close_time < open_time — a negative holding duration in the book.
+    """
+    candle = datetime.datetime(2026, 8, 20, 14, 0, tzinfo=pytz.UTC)  # bucket start
+    opened = datetime.datetime(2026, 8, 20, 14, 3, 27)  # noqa: DTZ001 - signal posted mid-candle
+    assert mon._close_timestamp(candle, opened) == opened, "must clamp at open_time, not backdate"
+
+
+def test_close_timestamp_returns_naive_utc():
+    """closed_ai_signals.close_time is a naive UTC column - an aware value would
+    be cast through the session TZ and shift by the local +03 offset."""
+    candle = datetime.datetime(2026, 8, 20, 14, 5, tzinfo=pytz.timezone("Europe/Bucharest"))
+    got = mon._close_timestamp(candle, None)
+    assert got.tzinfo is None
+    assert got == candle.astimezone(pytz.UTC).replace(tzinfo=None)
+
+
+# ── disarm gating ─────────────────────────────────────────────────────────────
+def test_disarm_only_once_every_trade_was_scored():
+    disarm, unscored = mon._should_disarm_catchup({1, 2, 3}, {1, 2, 3}, passes=1)
+    assert disarm is True and not unscored
+
+
+def test_stale_coin_trades_keep_the_catchup_armed():
+    """Regression: trades on coins skipped by the stale guard never get a
+    watermark. Disarming on the first pass drops their gap for good — and if
+    ingestion was down with the fleet, that is every coin."""
+    disarm, unscored = mon._should_disarm_catchup({1, 2, 3}, {1, 2}, passes=1)
+    assert disarm is False, "must stay armed while a trade is still unscored"
+    assert unscored == {3}
+
+
+def test_disarm_is_bounded_so_a_dead_coin_cannot_pin_the_catchup():
+    disarm, unscored = mon._should_disarm_catchup({1, 2, 3}, {1, 2}, passes=mon.CATCHUP_MAX_PASSES)
+    assert disarm is True, "a permanently stale coin must not keep re-fetching the gap forever"
+    assert unscored == {3}, "and the give-up must be reportable, not silent"
 
 
 def _code_identifiers(source: str) -> set[str]:
@@ -219,10 +267,21 @@ def test_catchup_floor_is_actually_wired_into_the_poll_loop():
     assert len(calls) >= 2, f"_catchup_floor is called {len(calls)}x - both call sites are required"
 
 
-def test_catchup_is_disarmed_after_the_first_pass():
-    assert "catchup_from = None" in SRC.split("cold-start catch-up done")[1][:200], (
-        "catch-up must not re-arm every iteration, otherwise every poll re-scans the whole gap"
-    )
+def test_catchup_is_disarmed_once_the_gate_allows_it():
+    """The catch-up must end (else every poll re-scans the whole gap) — but only
+    through the gate, never unconditionally after one pass."""
+    assert "catchup_from = None" in SRC.split("cold-start catch-up done")[1][:200]
+
+
+def test_disarm_gate_is_actually_wired_into_the_poll_loop():
+    """Same reasoning as the _catchup_floor wiring guard: a pure helper nobody
+    calls is a green test over a live bug."""
+    calls = [
+        n
+        for n in ast.walk(ast.parse(SRC))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_should_disarm_catchup"
+    ]
+    assert len(calls) == 1, f"_should_disarm_catchup is called {len(calls)}x - expected exactly the poll loop"
 
 
 if __name__ == "__main__":

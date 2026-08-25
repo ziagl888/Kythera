@@ -31,6 +31,9 @@ MAX_CATCHUP_HOURS = 48.0
 # no-op (closed trades are gone from ai_signals), missing one is not.
 CATCHUP_OVERLAP_MIN = 15
 STATE_WRITE_INTERVAL_S = 60.0
+# A permanently stale coin must not keep the catch-up armed forever (every pass
+# would re-fetch the whole gap). ~10 min at the 10s poll cadence.
+CATCHUP_MAX_PASSES = 60
 
 
 def _resolve_catchup(wm_raw, now_utc):
@@ -63,6 +66,38 @@ def _resolve_catchup(wm_raw, now_utc):
         "info",
         f"cold start: catch-up armed - replaying 5m candles from {start.isoformat()} ({gap_h:.2f}h gap).",
     )
+
+
+def _close_timestamp(candle_open_time, trade_open_time):
+    """Book close_time: the 5m candle that triggered the exit, in naive UTC.
+
+    Clamped at the trade's own open_time. A trade that closes inside the very
+    candle it was posted in would otherwise be stamped up to one candle BEFORE it
+    opened - the forming candle's open_time precedes the signal - which writes a
+    negative holding duration into closed_ai_signals.
+    """
+    ts = candle_open_time
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(pytz.UTC).replace(tzinfo=None)
+    ot = trade_open_time
+    if ot is None:
+        return ts
+    if ot.tzinfo is not None:
+        ot = ot.astimezone(pytz.UTC).replace(tzinfo=None)
+    return ot if ts < ot else ts
+
+
+def _should_disarm_catchup(active_ids, scored_ids, passes):
+    """Whether the cold-start catch-up may stop. Returns (disarm, unscored).
+
+    Only once EVERY active trade carries a watermark: trades on coins with stale
+    5m data are skipped by the stale guard and never get one, so disarming after
+    the first pass would drop their gap for good - and if ingestion was down with
+    the fleet, that is every coin. Bounded by CATCHUP_MAX_PASSES so a permanently
+    stale coin cannot keep the catch-up armed forever.
+    """
+    unscored = set(active_ids) - set(scored_ids)
+    return (not unscored) or passes >= CATCHUP_MAX_PASSES, unscored
 
 
 def _catchup_floor(catchup_from, open_time):
@@ -152,6 +187,7 @@ def main():
     )
     getattr(logger, _lvl)(_msg)
     _last_state_write = 0.0
+    _catchup_passes = 0
 
     while True:
         try:
@@ -485,7 +521,7 @@ def main():
                             # that triggered it. NOW() booked wall-clock time, which is
                             # wrong by one poll gap in normal operation and by the whole
                             # downtime after a restart.
-                            close_ts = c_ot.astimezone(pytz.UTC).replace(tzinfo=None)
+                            close_ts = _close_timestamp(c_ot, open_time)
                             pnl = (
                                 (close_price - entry) / entry * 100
                                 if direction == "LONG"
@@ -581,11 +617,21 @@ def main():
             if updates_pending > 0:
                 conn.commit()
 
-            # T-2026-KYT-9050-150: the pass is through and every live trade carries a
-            # watermark now - catch-up must not re-arm on the next iteration.
+            # T-2026-KYT-9050-150: disarm the catch-up only once every active trade
+            # really carries a watermark - see _should_disarm_catchup.
             if catchup_from is not None:
-                logger.info("cold-start catch-up done - back to incremental scoring.")
-                catchup_from = None
+                _catchup_passes += 1
+                _disarm, _unscored = _should_disarm_catchup(active_ids, last_checked.keys(), _catchup_passes)
+                if _disarm and _unscored:
+                    logger.warning(
+                        f"cold-start catch-up gave up after {_catchup_passes} passes - "
+                        f"{len(_unscored)} trade(s) on stale coins were never scored; "
+                        "their gap stays unrepaired."
+                    )
+                    catchup_from = None
+                elif _disarm:
+                    logger.info("cold-start catch-up done - back to incremental scoring.")
+                    catchup_from = None
 
             # Persist the pass end (throttled) so the next cold start can replay the
             # gap. Written only after a clean pass; a crashed pass keeps the older
