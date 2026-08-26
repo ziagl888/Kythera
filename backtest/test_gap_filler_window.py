@@ -170,6 +170,36 @@ def test_success_watermark_is_recorded():
     assert len(_calls_to("_record_gap_success")) == 1
 
 
+# ── the credibility gate on the watermark ─────────────────────────────────────
+def test_a_run_where_everything_failed_does_not_advance_the_watermark():
+    """Per-coin errors are swallowed inside the filler, so a run with Binance
+    unreachable still returns normally and logs "no gaps found". Trusting that
+    would shrink the next window and lose a real gap for good — precisely the
+    failure class this task fixes."""
+    assert hk.should_record_gap_success({"pairs_attempted": 3144, "errors": 3144}) is False
+
+
+def test_a_clean_run_advances_the_watermark():
+    assert hk.should_record_gap_success({"pairs_attempted": 3144, "errors": 0}) is True
+
+
+def test_a_few_bad_coins_still_count_as_a_run():
+    """One delisted or rate-limited coin must not stall the watermark forever."""
+    assert hk.should_record_gap_success({"pairs_attempted": 3144, "errors": 12}) is True
+
+
+def test_missing_or_empty_summary_is_not_trusted():
+    for junk in (None, {}, {"pairs_attempted": 0, "errors": 0}):
+        assert hk.should_record_gap_success(junk) is False, f"{junk!r} must not advance the watermark"
+
+
+def test_watermark_write_is_gated_not_unconditional():
+    """Source guard: the record call must sit behind the credibility check."""
+    assert len(_calls_to("should_record_gap_success")) == 1
+    gated = SRC.split("if should_record_gap_success(summary):")[1][:200]
+    assert "_record_gap_success(now_utc)" in gated
+
+
 def test_state_file_is_gitignored():
     ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert os.path.basename(hk.GAP_FILL_STATE_FILE) in ignored, "runtime state must never be committed"

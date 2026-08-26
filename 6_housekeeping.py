@@ -115,6 +115,24 @@ def should_gap_fill_on_start(last_run_iso, now_utc):
     return False, f"only {since_h:.1f}h since the last successful run - nothing missed."
 
 
+def should_record_gap_success(summary) -> bool:
+    """Whether a finished gap-fill run may advance the success watermark.
+
+    Per-coin errors are swallowed inside the filler, so a run in which EVERY
+    coin+timeframe failed (Binance unreachable, say) still returns normally and
+    logs "no gaps found". Recording that as success would shrink the next run's
+    window and lose a real gap for good — the exact failure class T-155 fixes.
+    So the watermark only advances if at least one pair was actually inspected.
+    """
+    if not summary:
+        return False
+    pairs = int(summary.get("pairs_attempted", 0) or 0)
+    errors = int(summary.get("errors", 0) or 0)
+    if pairs <= 0:
+        return False
+    return errors < pairs
+
+
 def _read_gap_watermark():
     return (atomic_read_json(GAP_FILL_STATE_FILE, default={}) or {}).get("last_success_utc")
 
@@ -127,8 +145,14 @@ def run_gap_filler(now_utc) -> None:
     """Resolve the window, run the filler, remember the success."""
     hours, level, message = resolve_gap_scan_hours(_read_gap_watermark(), now_utc)
     getattr(logger, level)(message)
-    fill_ohlcv_gaps_and_invalidate_indicators(scan_hours=int(round(hours)))
-    _record_gap_success(now_utc)
+    summary = fill_ohlcv_gaps_and_invalidate_indicators(scan_hours=int(round(hours)))
+    if should_record_gap_success(summary):
+        _record_gap_success(now_utc)
+    else:
+        logger.error(
+            "gap filler: run not credible (no coin+TF pair completed) - keeping the previous "
+            "watermark so the next run still covers this window."
+        )
 
 
 def update_coins_json():
@@ -739,6 +763,12 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
     it resolves the scan window from the last successful run instead of assuming
     a fixed 24h, and records the success watermark.
 
+    Returns a summary dict (pairs_attempted / errors / coin_tf_affected /
+    candles_filled / indicator_rows_invalidated / duration_s). Per-coin errors are
+    swallowed here so one bad coin cannot stall the job, which means a caller
+    cannot tell "no gaps" from "nothing could be checked" without these counts —
+    see `should_record_gap_success`.
+
     Error isolation: exceptions per coin+TF are caught, the rest continues.
     A single faulty coin does not slow down the job.
 
@@ -763,6 +793,10 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
     total_coins_affected = 0
     total_candles_filled = 0
     total_indicator_rows_invalidated = 0
+    # T-2026-KYT-9050-155: the caller needs to tell "nothing to fix" apart from
+    # "nothing could be checked" before it advances the success watermark.
+    pairs_attempted = 0
+    total_errors = 0
 
     conn = None
     try:
@@ -770,6 +804,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
 
         for symbol in coins:
             for tf in TIMEFRAMES:
+                pairs_attempted += 1
                 try:
                     tf_seconds = _timeframe_to_seconds(tf)
                     if tf_seconds == 0:
@@ -904,6 +939,7 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                     time.sleep(0.1)
 
                 except Exception as e:
+                    total_errors += 1
                     logger.warning(f"Gap-Filler error for {symbol}_{tf}: {e}")
                     try:
                         conn.rollback()
@@ -919,8 +955,13 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
                 pass
 
     duration = time.time() - start_time
-    if total_coins_affected == 0:
-        logger.info(f"✅ Gap-Filler done: no gaps found ({duration:.1f}s).")
+    if total_errors and total_errors >= pairs_attempted:
+        logger.error(
+            f"❌ Gap-Filler: ALL {pairs_attempted} coin+TF pairs failed ({duration:.1f}s) — "
+            "nothing was inspected, the success watermark stays where it was."
+        )
+    elif total_coins_affected == 0:
+        logger.info(f"✅ Gap-Filler done: no gaps found ({duration:.1f}s, {total_errors} pair error(s)).")
     else:
         logger.info(
             f"✅ Gap-Filler done: {total_coins_affected} coin+TF combinations affected, "
@@ -929,6 +970,14 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
             f"Duration: {duration:.1f}s. "
             f"Indicator-Engine will automatically recalculate on next run."
         )
+    return {
+        "pairs_attempted": pairs_attempted,
+        "errors": total_errors,
+        "coin_tf_affected": total_coins_affected,
+        "candles_filled": total_candles_filled,
+        "indicator_rows_invalidated": total_indicator_rows_invalidated,
+        "duration_s": duration,
+    }
 
 
 def main():
