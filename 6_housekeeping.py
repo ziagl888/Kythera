@@ -30,9 +30,105 @@ from core.config import (
 )
 from core.database import get_db_connection
 from core.http_retry import MinIntervalThrottle, RetryBudget, backoff_seconds
+from core.state_utils import atomic_read_json, atomic_write_json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - HOUSEKEEPING - %(message)s')
 logger = logging.getLogger(__name__)
+
+# T-2026-KYT-9050-155: the gap filler used to scan a hardcoded 24h and to run
+# only at 03:00 UTC. Both failed in the T-154 incident: the 2026-08-24 outage left
+# a candle gap that was 42h old by the next nightly run (outside the window), and
+# the restart in between never looked for it. We now remember when the filler last
+# succeeded and cover everything since.
+GAP_FILL_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gap_filler_state.json")
+# Never scan less than before — the window may grow, never shrink.
+GAP_SCAN_MIN_HOURS = 24.0
+# ...and never grow without bound: the filler walks ~524 coins x N timeframes with
+# a REST fetch per gap, on a CPU-tight VPS. A longer absence is a repair job.
+GAP_SCAN_MAX_HOURS = 168.0
+# Overlap so a gap right at the boundary of the last run is not missed.
+GAP_SCAN_MARGIN_HOURS = 2.0
+
+
+def resolve_gap_scan_hours(last_run_iso, now_utc):
+    """How far back the gap filler should scan. Returns (hours, level, message).
+
+    Pure: no I/O, no logging. Covers everything since the last successful run
+    plus a margin, floored at the previous fixed 24h so behaviour never regresses
+    and capped so a long absence cannot turn into an unbounded scan.
+    """
+    if not last_run_iso:
+        return (
+            GAP_SCAN_MIN_HOURS,
+            "info",
+            f"gap filler: no previous-run watermark - scanning the default {GAP_SCAN_MIN_HOURS:.0f}h.",
+        )
+    try:
+        last = datetime.datetime.fromisoformat(last_run_iso)
+    except (ValueError, TypeError):
+        return (
+            GAP_SCAN_MIN_HOURS,
+            "warning",
+            f"gap filler: unreadable watermark {last_run_iso!r} - scanning the default {GAP_SCAN_MIN_HOURS:.0f}h.",
+        )
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=datetime.timezone.utc)
+    since_h = (now_utc - last).total_seconds() / 3600.0
+    if since_h < 0:
+        return (
+            GAP_SCAN_MIN_HOURS,
+            "warning",
+            f"gap filler: watermark {last_run_iso} is in the future - scanning the default {GAP_SCAN_MIN_HOURS:.0f}h.",
+        )
+    needed = since_h + GAP_SCAN_MARGIN_HOURS
+    if needed > GAP_SCAN_MAX_HOURS:
+        return (
+            GAP_SCAN_MAX_HOURS,
+            "warning",
+            f"gap filler: {since_h:.1f}h since the last successful run exceeds the "
+            f"{GAP_SCAN_MAX_HOURS:.0f}h cap - scanning {GAP_SCAN_MAX_HOURS:.0f}h. "
+            "Gaps older than that stay unrepaired; fill them out of band.",
+        )
+    hours = max(needed, GAP_SCAN_MIN_HOURS)
+    return hours, "info", f"gap filler: {since_h:.1f}h since the last successful run - scanning {hours:.1f}h."
+
+
+def should_gap_fill_on_start(last_run_iso, now_utc):
+    """Whether the startup pass should run the filler. Returns (run, reason).
+
+    Only when at least one nightly run was missed - that is the post-outage
+    restart, which is exactly when a gap exists and nothing else looks for it. An
+    ordinary restart must stay cheap, and a first deploy (no watermark) must not
+    surprise the operator with a full scan.
+    """
+    if not last_run_iso:
+        return False, "no watermark yet - leaving the first scan to the nightly run."
+    try:
+        last = datetime.datetime.fromisoformat(last_run_iso)
+    except (ValueError, TypeError):
+        return False, f"unreadable watermark {last_run_iso!r} - leaving the scan to the nightly run."
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=datetime.timezone.utc)
+    since_h = (now_utc - last).total_seconds() / 3600.0
+    if since_h > GAP_SCAN_MIN_HOURS:
+        return True, f"{since_h:.1f}h since the last successful run - at least one nightly run was missed."
+    return False, f"only {since_h:.1f}h since the last successful run - nothing missed."
+
+
+def _read_gap_watermark():
+    return (atomic_read_json(GAP_FILL_STATE_FILE, default={}) or {}).get("last_success_utc")
+
+
+def _record_gap_success(now_utc) -> None:
+    atomic_write_json(GAP_FILL_STATE_FILE, {"last_success_utc": now_utc.isoformat()})
+
+
+def run_gap_filler(now_utc) -> None:
+    """Resolve the window, run the filler, remember the success."""
+    hours, level, message = resolve_gap_scan_hours(_read_gap_watermark(), now_utc)
+    getattr(logger, level)(message)
+    fill_ohlcv_gaps_and_invalidate_indicators(scan_hours=int(round(hours)))
+    _record_gap_success(now_utc)
 
 
 def update_coins_json():
@@ -627,11 +723,21 @@ def _timeframe_to_seconds(tf: str) -> int:
 def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
     """Nightly gap-filler.
 
-    Scans the last `scan_hours` hours of the `{symbol}_{tf}` table for each
-    coin × timeframe for missing candles. Gaps are refetched via Binance REST,
-    then the corresponding entries from the `{symbol}_{tf}_indicators` table
-    from the first gap onwards are deleted, so the Indicator-Engine automatically
+    Scans the last `scan_hours` hours for each coin × timeframe for missing
+    candles. Gaps are refetched via Binance REST, then the indicator rows from the
+    first gap onwards are deleted, so the Indicator-Engine automatically
     recalculates on its next regular run (including full 1000-candle warmup).
+
+    Storage note (T-2026-KYT-9050-155): this reads and writes through
+    `core.candles` (read_candles / upsert_candles / delete_indicators_from), so it
+    follows KYTHERA_CANDLES_SOURCE and the dual-write mirror. It is NOT hardwired
+    to the `{symbol}_{tf}` per-coin tables — an earlier version of this docstring
+    said so, which during the T-154 incident produced a wrong "this safety net is
+    dead" diagnosis and cost real debugging time.
+
+    The caller should use `run_gap_filler()` rather than calling this directly:
+    it resolves the scan window from the last successful run instead of assuming
+    a fixed 24h, and records the success watermark.
 
     Error isolation: exceptions per coin+TF are caught, the rest continues.
     A single faulty coin does not slow down the job.
@@ -836,6 +942,17 @@ def main():
     cleanup_delisted_trades()
     update_max_leverage_json()
 
+    # T-2026-KYT-9050-155: a restart after an outage is exactly when a candle gap
+    # exists and, before this, exactly when nothing looked for it — the filler ran
+    # only at 03:00. Gated on the watermark so an ordinary restart stays cheap.
+    _start_now = datetime.datetime.now(datetime.timezone.utc)
+    _run_now, _why = should_gap_fill_on_start(_read_gap_watermark(), _start_now)
+    if _run_now:
+        logger.warning(f"⏰ startup gap-fill: {_why}")
+        run_gap_filler(_start_now)
+    else:
+        logger.info(f"startup gap-fill skipped: {_why}")
+
     logger.info("Waiting in the background for 03:00 UTC...")
 
     while True:
@@ -872,12 +989,15 @@ def main():
             # 6b. P3.2: cap the unrotated dashboard.log pipe.
             truncate_oversized_logs()
 
-            # 7. Nightly gap-filler: scans the last 24h of all coin×TF tables
-            # for missing candles, refetches them via Binance REST, and
-            # invalidates the corresponding indicator entries from the first gap
-            # onwards. Indicator-Engine recalculates automatically on its next
-            # 30-minute run (including 1000-candle warmup) — no jumps in values.
-            fill_ohlcv_gaps_and_invalidate_indicators(scan_hours=24)
+            # 7. Nightly gap-filler: scans for missing candles, refetches them
+            # via Binance REST, and invalidates the corresponding indicator
+            # entries from the first gap onwards. Indicator-Engine recalculates
+            # automatically on its next 30-minute run (including 1000-candle
+            # warmup) — no jumps in values.
+            # T-2026-KYT-9050-155: the window now covers everything since the last
+            # successful run instead of a fixed 24h — a missed run used to make its
+            # gap permanently invisible.
+            run_gap_filler(now)
 
             # Sleep 65 seconds so it reaches 03:01
             # and doesn't trigger the routine again today

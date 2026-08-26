@@ -1,3 +1,40 @@
+## [2026-08-26] The gap filler now covers the actual downtime and runs after a restart (T-2026-KYT-9050-155)
+
+Follow-up to the T-154 incident, where a candle gap silently blocked AIM2 for two days and had to be
+repaired by hand. The gap filler exists to prevent exactly that and did not fire — for two reasons,
+neither of which was that it is broken.
+
+**The window.** It was called with a hardcoded `scan_hours=24`. The 2026-08-24 gap was 42h old by the
+time the next nightly run came around, so it fell outside the scan — and every later run is further
+away still, so the gap was invisible permanently. The window is now derived from the last
+*successful* run: everything since, plus a 2h margin, floored at the old 24h so behaviour never
+regresses and capped at 168h so a long absence cannot turn into an unbounded scan (the filler walks
+~524 coins × N timeframes with a REST fetch per gap, on a CPU-tight VPS). When the cap bites it says
+so loudly instead of dropping the remainder silently.
+
+**The trigger.** It ran only inside the `03:00 UTC` branch. The startup pass did coins.json, delisted
+trades and max-leverage — but never looked for gaps. A restart after an outage is precisely when a
+gap exists and precisely when nothing was looking. The startup pass now runs it too, gated on the
+watermark: only when at least one nightly run was missed, so an ordinary restart stays cheap and a
+first deploy (no watermark) does not surprise the operator with a full scan. Had this been in place,
+the 2026-08-25 12:56 restart would have healed the incident by itself.
+
+* Success watermark persisted to `gap_filler_state.json` (atomic, `core.state_utils` — same pattern
+  as the monitor cold-start watermark from T-150/T-152).
+* `fill_ohlcv_gaps_and_invalidate_indicators` is no longer called directly; `run_gap_filler()`
+  resolves the window, logs it, and records the success.
+* **Docstring corrected.** It claimed the function scans the `{symbol}_{tf}` per-coin tables. It does
+  not — it goes through `core.candles` and therefore follows `KYTHERA_CANDLES_SOURCE` and the
+  dual-write mirror. That stale sentence produced a wrong "this safety net is dead" diagnosis during
+  the incident and cost real debugging time; a test now pins the corrected wording.
+* `backtest/test_gap_filler_window.py`: 18 DB-free tests. The central one replays the incident to the
+  minute (last good run 24.08 03:00 UTC, first missing candle 06:00, restart 25.08 12:56) and asserts
+  the resolved window reaches back past the gap — plus a companion test asserting a fixed 24h would
+  NOT have, so the regression test cannot quietly become vacuous. Mutation-checked.
+
+Not in scope: the `PT72H` `ExecutionTimeLimit` that caused the outage (T-2026-KYT-9050-151, merged,
+operator apply pending) and the P2.13 gap guard in the indicator engine, which behaved correctly.
+
 ## [2026-08-25] 5_trade_monitor gets the cold-start catch-up too; the mechanism moved to core so the two monitors cannot drift again (T-2026-KYT-9050-152)
 
 AUDIT_TODO P2.7 was written for **both** trade monitors — "the watermark is lost on a process
