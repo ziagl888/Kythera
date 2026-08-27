@@ -744,7 +744,7 @@ def _timeframe_to_seconds(tf: str) -> int:
     return mapping.get(tf, 0)
 
 
-def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
+def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> dict:
     """Nightly gap-filler.
 
     Scans the last `scan_hours` hours for each coin × timeframe for missing
@@ -785,7 +785,9 @@ def fill_ohlcv_gaps_and_invalidate_indicators(scan_hours: int = 24) -> None:
         coins = [c.upper() for c in coins if c.upper().endswith("USDT")]
     except Exception as e:
         logger.error(f"Gap-Filler could not load coins.json: {e}")
-        return
+        # Empty summary => should_record_gap_success() is False: nothing was
+        # inspected, so the watermark must not advance past this window.
+        return {}
 
     now_ms = int(time.time() * 1000)
     scan_start_ms = now_ms - (scan_hours * 3600 * 1000)
