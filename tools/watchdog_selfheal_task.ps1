@@ -210,7 +210,6 @@ function Invoke-SelfTest {
   </Settings>
 </Task>
 '@
-    $fail = 0
     function Assert([bool]$cond, [string]$what) {
         if ($cond) { Write-Line ("  PASS  {0}" -f $what) }
         else { Write-Line ("  FAIL  {0}" -f $what) 'ERROR'; $script:selfTestFailures++ }
@@ -247,6 +246,15 @@ function Invoke-SelfTest {
 
     # 6. other settings are untouched
     Assert ($out -match '<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>') 'unrelated settings survive'
+
+    # 7. the result must still parse as XML. The whole failure class this task is
+    # about is a writer that emits XML the scheduler then rejects, so a
+    # text-pattern assertion alone would miss exactly the bug we are fixing.
+    foreach ($candidate in @(@{n='insert'; x=$out}, @{n='replace'; x=$out2}, @{n='RestartOnFailure'; x=$rof})) {
+        $parsed = $true
+        try { [xml]$candidate.x | Out-Null } catch { $parsed = $false }
+        Assert $parsed ("result of {0} is well-formed XML" -f $candidate.n)
+    }
 
     if ($script:selfTestFailures -gt 0) {
         Write-Line ("SELF-TEST FAILED: {0} assertion(s)." -f $script:selfTestFailures) 'ERROR'
