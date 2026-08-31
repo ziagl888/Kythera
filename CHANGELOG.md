@@ -1,3 +1,52 @@
+## [2026-08-31] The watchdog self-heal script writes via XML — the CIM path never could, and a green dry run hid it (T-2026-KYT-9050-156)
+
+`tools/watchdog_selfheal_task.ps1` shipped in T-2026-KYT-9050-151 with a clean dry run and an apply
+path that does not work against the live task. Proven when the operator ran it for real: two
+consecutive failures, then a manual XML path that worked first try. **A dry run proves nothing about
+an apply path, because it never writes** — that is the lesson, and the reason this change adds a
+self-test that exercises the write logic without writing.
+
+**Two correction to earlier claims, both from T-151 and its CHANGELOG entry:**
+
+* *"The task carries `ExecutionTimeLimit=PT72H`"* — it did not. The `<Settings>` block had **no
+  `<ExecutionTimeLimit>` element at all**; `PT72H` is the Windows default (`P3D`) that
+  `Get-ScheduledTask` materialises. Nobody ever configured 72 hours; the limit came from the absence
+  of a setting. The effect was real, the description was wrong.
+* *"Both fields sit on the same Settings object, so writing them together halves the exposure"* —
+  true as far as it went, but the write itself could not succeed. `Set-ScheduledTask -Settings`
+  rewrites the WHOLE settings object, `Get-ScheduledTask` materialises every default into it, and
+  the CIM provider then emits XML it does not validate itself: *"The task XML is missing a required
+  element or attribute.(41,8):Count:"* — naming a line 41 that does not exist in the real 35-line
+  task. It was dropping `<Count>` from `RestartOnFailure`.
+
+**What the script does now**
+
+* Apply goes `Export-ScheduledTask` → edit the element in the XML → `Register-ScheduledTask -Xml
+  -Force`. Verified end to end on the live task: XML 35 → 36 lines, exactly one line added, Windows
+  re-sorted it into canonical schema position, Principal/Trigger/Action byte-identical down to the
+  SID form of `UserId`, and the **running task instance survived the re-registration**.
+* The credential is **prompted** (`Read-Host -AsSecureString`) or passed as `-Credential` — never a
+  plaintext parameter, so it stays out of command lines and shell history. Windows cannot read a
+  stored task password back, so any rewrite has to re-supply it; without one the CIM path failed
+  with *"The user name or password is incorrect"*.
+* The original XML is backed up to `%TEMP%` **before** the write, because `-Force` replaces the task,
+  and both failure paths print the restore command.
+* `RestartOnFailure` is now written as XML with `<Interval>` **and** `<Count>`, which is what the CIM
+  path was mangling. It stays optional (`-SkipRestartOnFailure`) and the script keeps saying that it
+  does **not** cover the `ExecutionTimeLimit` kill — that termination ends success-class
+  (`SCHED_S_TASK_TERMINATED`), so the task never reports a failure to act on.
+* Verification now also compares `RunLevel`, not just `LogonType`/`UserId`, and reports all three.
+* `-SkipRestartOnFailure` no longer defeats the idempotency check (it used to re-register the task
+  for nothing when the time limit was already correct).
+
+**`-SelfTest`** runs the XML transformation against a captured copy of the real task shape: insert,
+replace-in-place, idempotency, nested inner XML (`Interval` + `Count`), refusal when there is no
+`<Settings>` block, and non-interference with unrelated settings. No task, no credential, no write —
+runnable anywhere, which is exactly what the previous version could not offer.
+
+Operationally: the `PT0S` change was applied to the live task on 2026-08-31 via the manual XML path
+this release automates. The 72h kill is gone.
+
 ## [2026-08-26] The gap filler now covers the actual downtime and runs after a restart (T-2026-KYT-9050-155)
 
 Follow-up to the T-154 incident, where a candle gap silently blocked AIM2 for two days and had to be
