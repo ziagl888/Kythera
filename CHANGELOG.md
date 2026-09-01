@@ -1,3 +1,36 @@
+## [2026-09-01] AUDIT_TODO P2.4 closed — the domains already agree, and the entry's own facts were wrong (T-2026-KYT-9050-153)
+
+P2.4 flagged `closed_ai_signals.close_time` as written in mixed time domains across three writers.
+Measured against the current code and the live book, the premise no longer holds — and the entry
+carried three errors of its own, one of which I had added.
+
+* **The domains agree.** `core/database._DEFAULT_SESSION_TZ` is the hardcoded `"UTC"` and
+  `_connect_options()` puts `-c timezone=UTC` on every pooled connection (the R3 flip,
+  T-2026-KYT-9050-005). Under that session TZ, server-side `NOW()` and a tz-aware Python value cast
+  into the naive column identically. Same resolution P2.5 got from the pool flip: **no code change,
+  the flip moved it.** Live evidence (read-only): bot 8's `max(close_time)` tracks UTC-now to
+  0.05 h, and **zero** rows across the whole table carry a `close_time` in the future — the
+  signature a Bucharest-local writer would leave.
+* **Every line reference was stale.** `8:247` is now `8:464`, `6:201` is `6:339`, and `28:729`
+  points at an INSERT into a different table entirely — the orchestrator's `closed_ai_signals`
+  writers are at `28:1253`/`28:1277`.
+* **`28_signal_orchestrator.py` never wrote `NOW()`** for `close_time`; it passes a tz-aware Python
+  UTC value. The T-151 addendum to this entry repeated that claim without checking the code — my
+  error, corrected in place rather than left to become institutional memory.
+* **`6_housekeeping.py` keeps `NOW()` and that is correct.** It closes DELISTED coins, where no
+  candle triggered anything and the close genuinely happens at housekeeping time. Porting bot 8's
+  candle stamp there would be wrong, and the new test says so in both directions.
+
+The reason this gets a test rather than just a checkbox: the agreement between the three writers
+rests on **one hardcoded constant and nothing else defended it**. Flip it and all three drift apart
+— no failing test, no log line, and the damage surfaces later as timestamps three hours off.
+
+* New `backtest/test_db_session_timezone.py`, 6 DB-free tests: the constant is `UTC`, the options
+  string carries it, the pool actually consumes that string, **no env var can move it** (the T-138
+  class where fleet entries never load `.env`), and the two corrected writer claims are pinned in
+  both directions so the entry cannot drift back. Mutation-checked: pointing the constant at
+  `Europe/Bucharest` fails three of the six.
+
 ## [2026-08-31] The watchdog self-heal script writes via XML — the CIM path never could, and a green dry run hid it (T-2026-KYT-9050-156)
 
 `tools/watchdog_selfheal_task.ps1` shipped in T-2026-KYT-9050-151 with a clean dry run and an apply
