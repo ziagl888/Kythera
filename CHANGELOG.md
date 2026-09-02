@@ -1,3 +1,37 @@
+## [2026-09-03] The 2026-08-20 outage window is marked contaminated in `closed_ai_signals`, not rewritten (T-2026-KYT-9050-157)
+
+Closing out the T-154 incident. The cold-start bug mis-booked a cohort: **1315** rows with a
+`close_time` up to 16h wrong, **525** with a wrong `targets_hit`, 11 still flagged open although
+closed. The obvious follow-up was to correct them. This deliberately does not, and says why in the
+ledger instead.
+
+**The window.** Watchdog killed 2026-08-20 13:57:43 UTC, fleet back 2026-08-21 05:49:01 UTC. The
+restart swept 943 closes into 40 seconds (05:51:15–05:51:51 UTC), cohort tail over the following
+hour.
+
+**Unreliable:** `close_time` (sweep time, not the triggering candle) and `targets_hit` (never
+incremented across the gap). **Sound:** `entry`, `close_price`, `status` — `close_price` is the SL
+*level*, not a slipped fill. The booked −6.07 % average against −1.80 % normal is the full initial
+stop distance of a cohort whose stops were never trailed up; it is not slippage and not a loss.
+
+**Why not corrected**
+
+* A mass `UPDATE` on the live book is the riskiest write in this series and the only one with no
+  time pressure behind it.
+* The money effect is nil — verified read-only against Binance (`positionRisk` flat, `userTrades`
+  showing no fills in the window), and the replay's aggregate is +0.71 % vs +0.74 % booked per trade.
+* The replay is unbiased for only **1128 of 3314** trades: the original SL is recoverable from the
+  status string only when `targets_hit = 0`.
+* Most of all, the corrected values would be a **reconstruction**, not what the monitor observed.
+  Replacing wrong data with plausible data makes the book *look* authoritative while being derived —
+  worse than a window that is openly marked. Method and analysis stay recorded in T-154 if the
+  correction is ever wanted after all.
+
+`AUDIT_TODO.md` gains `D-CONTAM-1` under monitors/data-integrity with the exact bounds, the
+per-column verdict, and a direct instruction for anyone running a study, roster analysis or
+realized-PnL report across late August: exclude or flag that sweep before averaging holding
+durations or ladder progression.
+
 ## [2026-09-01] AUDIT_TODO P2.4 closed — the domains already agree, and the entry's own facts were wrong (T-2026-KYT-9050-153)
 
 P2.4 flagged `closed_ai_signals.close_time` as written in mixed time domains across three writers.
